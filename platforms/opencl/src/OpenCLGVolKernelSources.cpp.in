@@ -1,0 +1,9 @@
+/* -------------------------------------------------------------------------- *
+ *                                   OpenMM-GVol                            *
+ * -------------------------------------------------------------------------- */
+
+#include "OpenCLGVolKernelSources.h"
+
+using namespace GVolPlugin;
+using namespace std;
+

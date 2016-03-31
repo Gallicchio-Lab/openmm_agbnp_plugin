@@ -1,0 +1,25 @@
+#ifndef OPENMM_OPENCLGVolKERNELSOURCES_H_
+#define OPENMM_OPENCLGVolKERNELSOURCES_H_
+
+/* -------------------------------------------------------------------------- *
+ *                                   OpenMM-GVol                            *
+ * -------------------------------------------------------------------------- */
+
+#include <string>
+
+namespace GVolPlugin {
+
+/**
+ * This class is a central holding place for the source code of OpenCL kernels.
+ * The CMake build script inserts declarations into it based on the .cl files in the
+ * kernels subfolder.
+ */
+
+class OpenCLGVolKernelSources {
+public:
+@CL_FILE_DECLARATIONS@
+};
+
+} // namespace GVolPlugin
+
+#endif /*OPENMM_OPENCLGVolKERNELSOURCES_H_*/
