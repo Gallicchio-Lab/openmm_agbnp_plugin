@@ -3,7 +3,7 @@ from simtk.openmm import *
 from simtk.unit import *
 from sys import stdout
 import os, time, shutil
-from simtk.openmm.app.desmonddmsfile import *
+from desmonddmsfile import *
 from datetime import datetime
 
 
@@ -13,20 +13,33 @@ shutil.copyfile('trpcage.dms','trpcage2.dms')
 testDes = DesmondDMSFile('trpcage2.dms')
 system = testDes.createSystem(nonbondedMethod=NoCutoff, OPLS = True, implicitSolvent='GVolSA')
 
+#Choose Reference or OpenCL platform
+
+#platform = Platform.getPlatformByName('Reference')
+#prop = {}
+
+platform = Platform.getPlatformByName('OpenCL')
+prop = {"OpenCLPrecision" : "single"}
+#prop= {"OpenCLPrecision" : "single", "OpenCLPlatformIndex" : "1", "OpenCLDeviceIndex": "0"};
+
+
+
 print "Minimization/equilibration ..."
 
-integrator = LangevinIntegrator(300*kelvin, 4.0/picosecond, 0.001*picoseconds)
-platform = Platform.getPlatformByName('Reference')
+integrator = LangevinIntegrator(300*kelvin, 1.0/picosecond, 0.0005*picoseconds)
 simulation = Simulation(testDes.topology, system, integrator,platform)
+print "Using platform %s" % simulation.context.getPlatform().getName()
 simulation.context.setPositions(testDes.positions)
 simulation.context.setVelocities(testDes.velocities)
-print "Using platform %s" % simulation.context.getPlatform().getName()
 state = simulation.context.getState(getEnergy = True)
 print(state.getPotentialEnergy())
 
 simulation.minimizeEnergy()
 simulation.reporters.append(StateDataReporter(stdout, 10, step=True, potentialEnergy=True,totalEnergy=True,temperature=True))
-#simulation.reporters.append(DCDReporter('trpcage2.dcd', 10))
+simulation.step(1000)
+positions = simulation.context.getState(getPositions=True).getPositions()
+velocities = simulation.context.getState(getVelocities=True).getVelocities()
+
 simulation.step(1000)
 positions = simulation.context.getState(getPositions=True).getPositions()
 velocities = simulation.context.getState(getVelocities=True).getVelocities()
@@ -37,10 +50,8 @@ integrator = VerletIntegrator(0.001*picoseconds)
 simulation = Simulation(testDes.topology, system, integrator,platform)
 simulation.context.setPositions(positions)
 simulation.context.setVelocities(velocities)
-print "Using platform %s" % simulation.context.getPlatform().getName()
 state = simulation.context.getState(getEnergy = True)
 simulation.reporters.append(StateDataReporter(stdout, 10, step=True, potentialEnergy=True,totalEnergy=True,temperature=True))
-#simulation.reporters.append(DCDReporter('trpcage2.dcd', 10))
 simulation.step(1000)
 positions = simulation.context.getState(getPositions=True).getPositions()
 velocities = simulation.context.getState(getVelocities=True).getVelocities()
