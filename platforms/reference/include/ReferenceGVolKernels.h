@@ -54,6 +54,7 @@ public:
      * @param force      the GVolForce to copy the parameters from
      */
     void copyParametersToContext(OpenMM::ContextImpl& context, const GVolForce& force);
+ 
 private:
     GaussVol *gvol; // gaussvol instance
     //inputs

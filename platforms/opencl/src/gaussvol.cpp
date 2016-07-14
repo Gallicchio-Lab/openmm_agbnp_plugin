@@ -582,7 +582,7 @@ static void test_gaussian(GOverlap_Tree &tree){
 
  GaussVol::GaussVol(int natoms, vector<RealOpenMM> &radii, 
 		    vector<RealOpenMM> &gammas, vector<bool>& ishydrogen_in){   
-
+   bool verbose = false;
    tree.natoms = natoms;
    radius1 = radii;
    gamma = gammas;
@@ -594,9 +594,11 @@ static void test_gaussian(GOverlap_Tree &tree){
    self_volume2.resize(natoms);
    free_volume2.resize(natoms);   
 
-   //for(int i = 0; i<natoms; i++){
-   //  cout << i << " " << radius1[i] << " " << gamma[i] << " " << radius2[i] << " " << ishydrogen[i] << endl;
-   //}
+   if(verbose){
+     for(int i = 0; i<natoms; i++){
+       cout << i << " " << radius1[i] << " " << gamma[i] << " " << radius2[i] << " " << ishydrogen[i] << endl;
+     }
+   }
    //cout << natoms << " " << radius1.size() << " " << gamma.size() << " " << ishydrogen.size() << endl;
 
 
@@ -611,20 +613,27 @@ static void test_gaussian(GOverlap_Tree &tree){
 			 vector<RealOpenMM> &surface_areas){
    RealOpenMM volume1, volume2, energy1, energy2;
    int natoms = tree.natoms;
+   bool rescan = false;
+   bool verbose = false;
    _nov_ = 0;
+
+ 
+  if(verbose){
+     for(int i = 0; i<natoms; i++){
+       cout << i << " " << positions[i][0] << " " << positions[i][1] << " " << positions[i][2] << endl;
+     }
+   }
 
    compute_overlap_tree_r(tree, natoms, positions, radius1, gamma, ishydrogen);
 
-   // print_flat_tree_2body(tree);
-
-   //cout << "Number of overlaps:" << _nov_ << endl;
+   //print_flat_tree_2body(tree);
+   
    compute_volume2_r(tree, 
    		     natoms, positions,
    		     volume1, energy1, 
    		     grad1, 
    		     free_volume, self_volume); 
-  
-   if(0){
+   if(verbose){
      cout << "Self Volumes:" << endl;
      float mol_volume = 0;
      for(int i = 0; i < natoms; ++i) mol_volume += self_volume[i];
@@ -632,7 +641,7 @@ static void test_gaussian(GOverlap_Tree &tree){
      cout << "Mol Volume:" << mol_volume << endl;
    }
 
-   if(1){
+   if(rescan){
      rescan_tree(tree, natoms, positions, radius2, gamma, ishydrogen);
      compute_volume2_r(tree, 
 		       natoms, positions,
@@ -640,13 +649,13 @@ static void test_gaussian(GOverlap_Tree &tree){
 		       grad2, 
 		       free_volume2, self_volume2);
      energy = energy1 - energy2;
-     if(0) cout << "E: " << energy1 << " " << energy2 << endl;
+     if(verbose) cout << "E: " << energy1 << " " << energy2 << endl;
    }else{
      energy = energy1;
-     cout << "E: " << energy1 << endl;
+     if(verbose) cout << "E: " << energy1 << endl;
    }
 
-   if(1){
+   if(rescan){
      for(int i = 0; i < natoms; ++i) force[i] = -(grad1[i] - grad2[i]);
      for(int i = 0; i < natoms; ++i) surface_areas[i] = (self_volume[i] - self_volume2[i])/SA_DR; 
    }else{
@@ -657,10 +666,6 @@ static void test_gaussian(GOverlap_Tree &tree){
 // returns number of overlaps for each atom 
 void GaussVol::getstat(vector<int>& nov, vector<int>& nov_2body){
    int natoms = tree.natoms;
-   nov.resize(natoms);
-   nov_2body.resize(natoms);
-   for(int i=0; i<natoms; i++) nov[i] = 0;
-   for(int i=0; i<natoms; i++) nov_2body[i] = 0;
    int tree_size = tree.overlaps.size();
    for(int slot = 0; slot < tree_size; slot++){
      int atom = tree.overlaps[slot].atom;

@@ -80,6 +80,8 @@ public:
     //int init_overlap_trees_ofatoms(vector<float> &x, vector<float> &y, vector<float> &z, vector<float> &r, vector<float> &gamma);
 
 private:
+    const GVolForce *gvol_force;
+
     int numParticles;
     bool useCutoff;
     bool usePeriodic;
@@ -96,7 +98,9 @@ private:
     OpenMM::OpenCLArray* ishydrogenParam;
     /* list of overlap trees (one for each atom) */
     int total_tree_size;
-    int num_reduction_blocks;
+    int num_sections;
+    int num_twobody_max;
+    int ov_work_group_size;
     vector<int> tree_size;
     vector<int> padded_tree_size;
     vector<int> tree_pointer;
@@ -105,7 +109,9 @@ private:
     /* overlap tree buffers */
     OpenMM::OpenCLArray* ovAtomTreePointer;
     OpenMM::OpenCLArray* ovAtomTreeSize;
+    OpenMM::OpenCLArray* NIterations;
     OpenMM::OpenCLArray* ovAtomTreePaddedSize;
+    OpenMM::OpenCLArray* ovAtomLock;
     OpenMM::OpenCLArray* ovAtomTreeLock;
     OpenMM::OpenCLArray* ovLevel;
     OpenMM::OpenCLArray* ovG; // real4: Gaussian position + exponent
@@ -113,6 +119,7 @@ private:
     OpenMM::OpenCLArray* ovVSfp;
     OpenMM::OpenCLArray* ovSelfVolume;
     OpenMM::OpenCLArray* ovGamma1i;
+    OpenMM::OpenCLArray* ovCountBuffer;
     /* volume derivatives */
     OpenMM::OpenCLArray* ovDV1; // real4: dV12/dr1 + dV12/dV1
     OpenMM::OpenCLArray* ovDV2; // real4: dPsi12/dr2
@@ -126,20 +133,27 @@ private:
     OpenMM::OpenCLArray* ovAtomBuffer;
     OpenMM::OpenCLArray* ovChildrenReported;
 
+    OpenMM::OpenCLArray* ovEnergyBuffer_long;
+
     cl::Kernel resetBufferKernel;
+    cl::Kernel resetOvCountKernel;
     cl::Kernel resetTree;
     cl::Kernel resetSelfVolumesKernel;
     cl::Kernel InitOverlapTreeKernel_1body_1;
     cl::Kernel InitOverlapTreeKernel_1body_2;
+    cl::Kernel InitOverlapTreeCountKernel;
+    cl::Kernel reduceovCountBufferKernel;
     cl::Kernel InitOverlapTreeKernel;
     cl::Kernel ComputeOverlapTreeKernel;
     cl::Kernel computeSelfVolumesKernel;
     cl::Kernel reduceSelfVolumesKernel_tree;
     cl::Kernel reduceSelfVolumesKernel_buffer;
     cl::Kernel resetTreeKernel;
-    cl::Kernel RescanOverlapTreeKernel;
     cl::Kernel SortOverlapTree2bodyKernel;
-
+    cl::Kernel resetComputeOverlapTreeKernel;
+    cl::Kernel ResetRescanOverlapTreeKernel;
+    cl::Kernel InitRescanOverlapTreeKernel;
+    cl::Kernel RescanOverlapTreeKernel;
 
     /* Gaussian atomic parameters */
     vector<float> gaussian_exponent;

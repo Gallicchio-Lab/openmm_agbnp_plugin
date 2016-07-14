@@ -75,7 +75,6 @@ int main() {
   try {
     registerGVolOpenCLKernelFactories();
     testForce();
-	//        testChangingParameters();
   }
   catch(const std::exception& e) {
     std::cout << "exception: " << e.what() << std::endl;

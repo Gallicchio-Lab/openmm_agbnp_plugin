@@ -71,7 +71,6 @@ void testForce() {
     std::cout << "Energy Change: " <<  energy2 - energy1  << std::endl;
     std::cout << "Energy Change from Gradient: " <<  de  << std::endl;
     //#endif
-
 }
 
 int main() {

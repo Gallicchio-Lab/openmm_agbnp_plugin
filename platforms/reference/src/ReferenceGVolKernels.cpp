@@ -76,6 +76,17 @@ double ReferenceCalcGVolForceKernel::execute(ContextImpl& context, bool includeF
       force[i] += surf_force[i];
     }
 
+#ifdef NOTNOW
+    vector<int> nov, nov_2body;
+    gvol->getstat(nov, nov_2body);    
+    int nn = 0, nn2 = 0;
+    for(int i = 0; i < nov.size(); i++){
+      nn += nov[i];
+     nn2 += nov_2body[i];
+    }
+    cout << "Noverlaps: " << nn << " " << nn2 << endl;
+#endif
+
     //returns energy
     return (double)surf_energy;
 }
