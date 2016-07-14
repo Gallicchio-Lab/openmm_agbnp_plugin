@@ -1,11 +1,11 @@
-This is the license statement for the AGBNP3 OpenMM Plugin 
+This is the license statement for the GaussVolSA OpenMM Plugin 
 software implementation funded by the National Science Foundation
 under grant NSF SI2 1440665  "SI2-SSE: High-Performance Software for 
 Large-Scale Modeling of Binding Equilibria"                                     
                                                                        
-copyright (c) 2014-2015 Emilio Gallicchio                              
+copyright (c) 2014-2016 Emilio Gallicchio                              
                                                                        
-The AGBNP3 OpenMM plugin is free software: you can redistribute it
+The GaussVolSA OpenMM plugin is free software: you can redistribute it
 and/or modify it under the terms of the GNU Lesser General Public
 License version 3 as published by the Free Software Foundation and
 reproduced below.
