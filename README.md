@@ -26,7 +26,7 @@ Download the package from github:
 git clone https://github.com/egallicc/openmm_gaussvol_plugin.git
 ```
 
-Build and install the plugin with cmake. For exampple, assuming a unix system:
+Build and install the plugin with cmake. For example, assuming a unix system:
 ```
 mkdir build_openmm_gaussvol_plugin
 cd build_openmm_gaussvol_plugin
