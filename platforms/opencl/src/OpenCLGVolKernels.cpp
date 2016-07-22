@@ -522,19 +522,9 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
 	"localData[localAtomIndex].gamma = global_atomic_gamma[j];\n"
 	"localData[localAtomIndex].ov_count = 0;\n";
 
-      replacements["ACQUIRE_TREE_LOCK"] =
-	 "if(tgx == 0){//first atom in warp \n"	
-	"	//acquire tree lock for the tile\n"
-	"	//If lock is not acquired all of the threads in the warp will wait\n"
-	"     do { children_count = atomic_xchg(&ovChildrenCount[atom1_tree_ptr], -1); } while(children_count < 0);\n"
-        "}\n"
-	"if(tgx != 0){//now the other threads in warp get count \n"
-	"     children_count = atomic_xchg(&ovChildrenCount[atom1_tree_ptr], -1); \n"
-	"}\n";
-
-      replacements["RELEASE_TREE_LOCK"] =
-	  "        //release lock\n"
-	  "        atomic_xchg(&ovChildrenCount[atom1_tree_ptr], children_count); \n";
+      //tree locks were used in the 2-body tree construction kernel. no more
+      replacements["ACQUIRE_TREE_LOCK"] = "";
+      replacements["RELEASE_TREE_LOCK"] = "";
 
       replacements["COMPUTE_INTERACTION_COUNT"] =
 		"	real a12 = a1 + a2; \n"
@@ -583,6 +573,7 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
 		"	     These, together with atom2 (last_atom) are entered into the tree for atom 1 if\n"
 		"	     volume is large enough.\n"
 		"	 */\n"
+                "        children_count = atomic_inc(&ovChildrenStartIndex[atom1_tree_ptr],1); \n"
 		"        int endslot = atom1_children_start + children_count; \n"
 		"        ovLevel[endslot] = 2; //two-body\n"
 		"	 ovVolume[endslot] = gvol;\n"
@@ -594,7 +585,6 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
 		"	 ovChildrenCount[endslot] = 0;\n"
 		"	 ovG[endslot] = (real4)(c12.xyz, a12);\n"
 	        "        ovDV1[endslot] = (real4)(-delta.xyz*dgvol,dgvolv);\n"
-                "        children_count += 1;\n"
 		"      }\n";
 
 
