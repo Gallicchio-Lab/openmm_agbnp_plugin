@@ -359,6 +359,15 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
       //"long" version of energy buffer
       ovEnergyBuffer_long = OpenCLArray::create<cl_long>(cl, cl.getPaddedNumAtoms(), "ovEnergyBuffer_long");
 
+
+      //temp buffers
+      int smax = 64; // this is n*(n-1)/2 where n is the max number of neighbors per overlap
+      temp_buffer_size = ov_work_group_size*num_sections*smax;
+      gvol_buffer_temp = OpenCLArray::create<cl_float>(cl, temp_buffer_size, "gvol_buffer_temp");
+      tree_pos_buffer_temp = OpenCLArray::create<cl_uint>(cl, temp_buffer_size, "tree_pos_buffer_temp");
+      i_buffer_temp = OpenCLArray::create<cl_int>(cl, temp_buffer_size, "i_buffer_temp");
+      atomj_buffer_temp = OpenCLArray::create<cl_int>(cl, temp_buffer_size, "atomj_buffer_temp");
+
       OpenCLCalcGVolForceKernel::copy_tree_to_device();
     }
 
@@ -553,6 +562,37 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
 		"	if(gvol > VolMin0 ){ \n"
                 "          ov_count += 1; //atomic_inc(&(ovCountBuffer[count_buffer_ptr + atom1])); \n"
 		"       } \n";
+
+      replacements["COMPUTE_INTERACTION_GVOLONLY"] =
+		"	real a12 = a1 + a2; \n"
+	        "       real df = a1*a2/a12; \n"
+                "       real ef = exp(-df*r2); \n"
+		"	real dfp = df/PI; \n"
+	        "       real gvol = v1*v2*dfp*dfp*rsqrt(dfp)*ef; \n";
+
+
+      replacements["COMPUTE_INTERACTION_OTHER"] =
+	"         real a12 = a1 + a2; \n"
+	"         real df = a1*a2/a12; \n"
+	"         real dgvol = -2.0f*df*gvol; \n"
+	"         real dgvolv = v1 > 0 ? gvol/v1 : 0; \n" 
+	"	  real4 c12 = (a1*posq1 + a2*posq2)/a12; \n"
+	"         //switching function \n"
+	"         real s = 0, sp = 0; \n"
+	"         if(gvol > VolMinB ){ \n"
+	"             s = 1.0f; \n"
+	"             sp = 0.0f; \n"
+	"         }else{ \n"
+	"             real swd = 1.f/( VolMinB - VolMinA ); \n"
+	"             real swu = (gvol - VolMinA)*swd; \n"
+	"             real swu2 = swu*swu; \n"
+	"             real swu3 = swu*swu2; \n"
+	"             s = swu3*(10.f-15.f*swu+6.f*swu2); \n"
+	"             sp = swd*30.f*swu2*(1.f - 2.f*swu + swu2); \n"
+	"         }\n"
+	"         // switching function end \n"
+	"	  real sfp = sp*gvol + s; \n"
+	"         gvol = s*gvol; \n";
 
 
       replacements["COMPUTE_INTERACTION_STORE1"] =
@@ -896,6 +936,43 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
       kernel.setArg<cl::Buffer>(index++, ovOKtoProcessFlag->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ovChildrenReported->getDeviceBuffer());
 
+      //pass 2 (1 pass kernel)
+      kernel_name = "ComputeOverlapTree_1pass";
+      replacements["KERNEL_NAME"] = kernel_name;
+      if(verbose) cout << "compiling " << kernel_name << " ... ";
+      ComputeOverlapTree_1passKernel = cl::Kernel(program, kernel_name.c_str());
+      if(verbose) cout << " done. " << endl;
+      index = 0;
+      kernel = ComputeOverlapTree_1passKernel;
+      kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, ovAtomTreeSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, NIterations->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, ovAtomTreePaddedSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, ovAtomTreeLock->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, cl.getPosq().getDeviceBuffer() );
+      kernel.setArg<cl::Buffer>(index++, GaussianExponent->getDeviceBuffer() );
+      kernel.setArg<cl::Buffer>(index++, GaussianVolume->getDeviceBuffer() );
+      kernel.setArg<cl::Buffer>(index++, AtomicGamma->getDeviceBuffer() );
+      kernel.setArg<cl::Buffer>(index++, ovLevel->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, ovVolume->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, ovVSfp->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, ovGamma1i->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, ovG->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, ovDV1->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, ovLastAtom->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, ovRootIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, ovChildrenStartIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, ovProcessedFlag->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, ovOKtoProcessFlag->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, ovChildrenReported->getDeviceBuffer());
+
+      kernel.setArg<cl_int>(index++, temp_buffer_size );
+      kernel.setArg<cl::Buffer>(index++,  gvol_buffer_temp->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++,  tree_pos_buffer_temp->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++,  i_buffer_temp->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++,  atomj_buffer_temp->getDeviceBuffer());
+
       if(verbose){
 	int kernelMaxThreads = ComputeOverlapTreeKernel.getWorkGroupInfo<CL_KERNEL_WORK_GROUP_SIZE>(cl.getDevice());
 	std::cout <<  "ComputeOverlapTreeKernel Max group: " << kernelMaxThreads   << std::endl;
@@ -1132,8 +1209,8 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
   cl.executeKernel(SortOverlapTree2bodyKernel, cl.getPaddedNumAtoms(), 1);
   if(verbose) cout << "Executing resetComputeOverlapTreeKernel" << endl;
   cl.executeKernel(resetComputeOverlapTreeKernel, cl.getPaddedNumAtoms());
-  if(verbose) cout << "Executing ComputeOverlapTreeKernel" << endl;
-  cl.executeKernel(ComputeOverlapTreeKernel, ov_work_group_size*num_sections, ov_work_group_size);
+  if(verbose) cout << "Executing ComputeOverlapTree_1passKernel" << endl;
+  cl.executeKernel(ComputeOverlapTree_1passKernel, ov_work_group_size*num_sections, ov_work_group_size);
   if(verbose) cout << "Executing resetSelfVolumesKernel" << endl;
   cl.executeKernel(resetSelfVolumesKernel, ov_work_group_size*num_sections, ov_work_group_size);
   if(verbose) cout << "Executing computeSelfVolumesKernel" << endl;
@@ -1215,7 +1292,6 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
       int iat = nat*section;
       int pp = tree_pointer[iat];
       int np = padded_tree_size[section];
-      np = 256;
       //self_volume += self_volumes[pp];
       std::cout << "slot level LastAtom parent ChStart ChCount SelfV V gamma a x y z dedx dedy dedz sfp processed ok2process children_reported" << endl;
       for(int i = pp; i < pp + np ; i++){
@@ -1225,6 +1301,26 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
     //std::cout << "Volume (from self volumes):" << self_volume <<std::endl;
   }
 
+  //temp arrays
+  if(false){
+    vector<cl_int> i_buffer(temp_buffer_size);
+    vector<cl_int> atomj_buffer(temp_buffer_size);
+    vector<cl_uint> tree_pos_buffer(temp_buffer_size);
+    vector<cl_float> gvol_buffer(temp_buffer_size);
+    int stride = ov_work_group_size*64;
+    i_buffer_temp->download(i_buffer);
+    atomj_buffer_temp->download(atomj_buffer);
+    tree_pos_buffer_temp->download(tree_pos_buffer);
+    gvol_buffer_temp->download(gvol_buffer);
+    std::cout << "i_buffer   " << "atomj_buffer  " << "gvol   " << " fij  " <<  std::endl;
+    for(int sect = 0; sect < num_sections; sect++){
+      int buffer_offset = stride*sect;
+      for(int j = 0; j < 640 ; j++){
+	int i = j + buffer_offset;
+	std::cout << i << " " << i_buffer[i] << " " << atomj_buffer[i] << " " << gvol_buffer[i] << " " << tree_pos_buffer[i] << std::endl;
+      }
+    }
+  }
 
   //gammas
   if(false){

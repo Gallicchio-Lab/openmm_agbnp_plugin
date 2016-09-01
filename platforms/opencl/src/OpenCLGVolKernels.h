@@ -145,6 +145,7 @@ private:
     cl::Kernel reduceovCountBufferKernel;
     cl::Kernel InitOverlapTreeKernel;
     cl::Kernel ComputeOverlapTreeKernel;
+    cl::Kernel ComputeOverlapTree_1passKernel;
     cl::Kernel computeSelfVolumesKernel;
     cl::Kernel reduceSelfVolumesKernel_tree;
     cl::Kernel reduceSelfVolumesKernel_buffer;
@@ -166,6 +167,11 @@ private:
     
     int niterations;
 
+    int temp_buffer_size;
+    OpenMM::OpenCLArray*  gvol_buffer_temp;
+    OpenMM::OpenCLArray*  tree_pos_buffer_temp;
+    OpenMM::OpenCLArray*  i_buffer_temp;
+    OpenMM::OpenCLArray*  atomj_buffer_temp;
 };
 
 } // namespace GVolPlugin
