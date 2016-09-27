@@ -1093,7 +1093,7 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
       kernel.setArg<cl::Buffer>(index++, ovOKtoProcessFlag->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ovChildrenReported->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ovAtomBuffer->getDeviceBuffer());
-      if(cl.getSupports64BitGlobalAtomics()){
+      if(useLong){
 	kernel.setArg<cl::Buffer>(index++, cl.getLongForceBuffer().getDeviceBuffer());
 	kernel.setArg<cl::Buffer>(index++, ovEnergyBuffer_long->getDeviceBuffer());
       }
@@ -1232,7 +1232,7 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
   }
 
 
-  if(verbose){
+  if(false){
     float self_volume = 0.0;
     vector<cl_float> self_volumes(total_tree_size);
     vector<cl_float> volumes(total_tree_size);

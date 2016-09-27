@@ -62,6 +62,7 @@ void ReferenceCalcGVolForceKernel::initialize(const System& system, const GVolFo
 double ReferenceCalcGVolForceKernel::execute(ContextImpl& context, bool includeForces, bool includeEnergy) {
     vector<RealVec>& pos = extractPositions(context);
     vector<RealVec>& force = extractForces(context);
+    bool verbose = true;
     int init = 0;
 
     //for (int i = 0; i < numParticles; i++){
@@ -86,6 +87,29 @@ double ReferenceCalcGVolForceKernel::execute(ContextImpl& context, bool includeF
     }
     cout << "Noverlaps: " << nn << " " << nn2 << endl;
 #endif
+
+    if(verbose){
+      //to input to freesasa
+      double nm2ang = 10.0;
+      cout << "id x y z radius: (Ang)" << endl;
+      for(int i = 0; i < numParticles; i++){
+	double rad = radii[i];
+	if(ishydrogen[i] == 1) rad = 0.0;
+	cout << "xyzr: " << i << " " << nm2ang*pos[i][0] << " " << nm2ang*pos[i][1] << " " << nm2ang*pos[i][2] << " " << nm2ang*rad << endl;
+      }
+    }
+
+
+    if(verbose){
+      cout << "Surface areas:" << endl;
+      double tot_surf_area = 0.0;
+      for(int i = 0; i < numParticles; i++){
+	cout << i << " " << surface_areas[i] << endl;
+	tot_surf_area += surface_areas[i];
+      }
+      cout << "Total surface area: (Ang^2) " << 100.0*tot_surf_area << endl;
+      cout << "Energy: " << surf_energy << endl;
+    }
 
     //returns energy
     return (double)surf_energy;
