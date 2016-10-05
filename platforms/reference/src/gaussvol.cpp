@@ -611,6 +611,7 @@ static void test_gaussian(GOverlap_Tree &tree){
 			 vector<RealOpenMM> &surface_areas){
    RealOpenMM volume1, volume2, energy1, energy2;
    int natoms = tree.natoms;
+   bool do_surf_energy = true;
    _nov_ = 0;
 
    compute_overlap_tree_r(tree, natoms, positions, radius1, gamma, ishydrogen);
@@ -632,7 +633,7 @@ static void test_gaussian(GOverlap_Tree &tree){
      cout << "Mol Volume:" << mol_volume << endl;
    }
 
-   if(1){
+   if(do_surf_energy){
      rescan_tree(tree, natoms, positions, radius2, gamma, ishydrogen);
      compute_volume2_r(tree, 
 		       natoms, positions,
@@ -646,7 +647,7 @@ static void test_gaussian(GOverlap_Tree &tree){
      cout << "E: " << energy1 << endl;
    }
 
-   if(1){
+   if(do_surf_energy){
      for(int i = 0; i < natoms; ++i) force[i] = -(grad1[i] - grad2[i]);
      for(int i = 0; i < natoms; ++i) surface_areas[i] = (self_volume[i] - self_volume2[i])/SA_DR; 
    }else{

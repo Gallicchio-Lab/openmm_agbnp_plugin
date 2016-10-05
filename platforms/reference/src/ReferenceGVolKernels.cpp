@@ -62,7 +62,7 @@ void ReferenceCalcGVolForceKernel::initialize(const System& system, const GVolFo
 double ReferenceCalcGVolForceKernel::execute(ContextImpl& context, bool includeForces, bool includeEnergy) {
     vector<RealVec>& pos = extractPositions(context);
     vector<RealVec>& force = extractForces(context);
-    bool verbose = true;
+    bool verbose = false;
     int init = 0;
 
     //for (int i = 0; i < numParticles; i++){

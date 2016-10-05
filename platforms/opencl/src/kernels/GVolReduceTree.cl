@@ -37,9 +37,9 @@ __kernel void reduceSelfVolumes_buffer(int bufferSize, int numBuffers,
       energyBuffer[atom] += scale*energyBuffer_long[atom];
 #else
       real4 sum = 0;
-      //for (int i = atom; i < totalSize; i += bufferSize) sum += ovAtomBuffer[i];
-      //energyBuffer[atom] += sum.w;
-      //forceBuffers[atom].xyz -= sum.xyz;
+      for (int i = atom; i < totalSize; i += bufferSize) sum += ovAtomBuffer[i];
+      energyBuffer[atom] += sum.w;
+      forceBuffers[atom].xyz -= sum.xyz;
 #endif
     }
     atom += get_global_size(0);

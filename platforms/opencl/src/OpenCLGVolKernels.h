@@ -77,7 +77,8 @@ public:
     int copy_tree_to_device(void);
 
     /* init tree */
-    //int init_overlap_trees_ofatoms(vector<float> &x, vector<float> &y, vector<float> &z, vector<float> &r, vector<float> &gamma);
+    void init_tree_size(int pad_modulo, 
+			vector<int>& noverlaps, vector<int>& noverlaps_2body);
 
 private:
     const GVolForce *gvol_force;
@@ -96,22 +97,32 @@ private:
     OpenMM::OpenCLArray* gammaParam1;
     OpenMM::OpenCLArray* gammaParam2;
     OpenMM::OpenCLArray* ishydrogenParam;
-    /* list of overlap trees (one for each atom) */
+
+    // tree sizes etc
+    int total_atoms_in_tree;
     int total_tree_size;
     int num_sections;
     int num_twobody_max;
-    int ov_work_group_size;
+    int pair_work_group_size; //group size for 2-body calculation
+    int ov_work_group_size; //group size for n-body calculation
+    int num_compute_units;
     vector<int> tree_size;
     vector<int> padded_tree_size;
-    vector<int> tree_pointer;
+    vector<int> atom_tree_pointer; //pointers to 1-body atom slots
+    vector<int> tree_pointer;      //pointers to tree sections
+    vector<int> natoms_in_tree;    //no. atoms in each tree section
+    vector<int> first_atom;        //the first atom in each tree section
+
     /* self volume coefficients */
     OpenMM::OpenCLArray* ovVolCoeff;
     /* overlap tree buffers */
     OpenMM::OpenCLArray* ovAtomTreePointer;
     OpenMM::OpenCLArray* ovAtomTreeSize;
+    OpenMM::OpenCLArray* ovTreePointer;
+    OpenMM::OpenCLArray* ovNumAtomsInTree;
+    OpenMM::OpenCLArray* ovFirstAtom;
     OpenMM::OpenCLArray* NIterations;
     OpenMM::OpenCLArray* ovAtomTreePaddedSize;
-    OpenMM::OpenCLArray* ovAtomLock;
     OpenMM::OpenCLArray* ovAtomTreeLock;
     OpenMM::OpenCLArray* ovLevel;
     OpenMM::OpenCLArray* ovG; // real4: Gaussian position + exponent
@@ -119,7 +130,6 @@ private:
     OpenMM::OpenCLArray* ovVSfp;
     OpenMM::OpenCLArray* ovSelfVolume;
     OpenMM::OpenCLArray* ovGamma1i;
-    OpenMM::OpenCLArray* ovCountBuffer;
     /* volume derivatives */
     OpenMM::OpenCLArray* ovDV1; // real4: dV12/dr1 + dV12/dV1
     OpenMM::OpenCLArray* ovDV2; // real4: dPsi12/dr2
@@ -128,6 +138,8 @@ private:
     OpenMM::OpenCLArray* ovRootIndex;
     OpenMM::OpenCLArray* ovChildrenStartIndex;
     OpenMM::OpenCLArray* ovChildrenCount;
+    OpenMM::OpenCLArray* ovChildrenCountTop;
+    OpenMM::OpenCLArray* ovChildrenCountBottom;
     OpenMM::OpenCLArray* ovProcessedFlag;
     OpenMM::OpenCLArray* ovOKtoProcessFlag;
     OpenMM::OpenCLArray* ovAtomBuffer;
@@ -164,6 +176,8 @@ private:
     /* gamma parameters */
     vector<float> atomic_gamma;
     OpenMM::OpenCLArray* AtomicGamma;
+
+    vector<bool> atom_ishydrogen;
     
     int niterations;
 

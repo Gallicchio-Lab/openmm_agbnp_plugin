@@ -44,29 +44,35 @@ void resetTreeCounters(
 
 
 //assume num. groups = num. tree sections
-__kernel void resetSelfVolumes(__global const int*  restrict ovAtomTreePointer,
-			       __global const int*  restrict ovAtomTreeSize,
-			       __global const int*  restrict ovAtomTreePaddedSize,
-			       __global const int*  restrict ovChildrenStartIndex,
+__kernel void resetSelfVolumes(const int ntrees,
+			       __global const int*   restrict ovTreePointer,
+			       __global const int*   restrict ovAtomTreePointer,
+			       __global const int*   restrict ovAtomTreeSize,
+			       __global const int*   restrict ovAtomTreePaddedSize,
+			       __global const int*   restrict ovChildrenStartIndex,
 			       __global const int*   restrict ovChildrenCount,
-			       __global       int*  restrict ovProcessedFlag,
-			       __global       int*  restrict ovOKtoProcessFlag,
-			       __global       int*  restrict ovChildrenReported,
+			       __global       int*   restrict ovProcessedFlag,
+			       __global       int*   restrict ovOKtoProcessFlag,
+			       __global       int*   restrict ovChildrenReported,
 			       __global       real*  restrict ovSelfVolume,
 			       __global       real4* restrict ovDV2
 ){
-    uint tree = get_group_id(0);      //index of this group
-    uint offset = ovAtomTreePointer[tree*ATOMS_PER_SECTION];
-    uint tree_size = ovAtomTreeSize[tree];
-    uint padded_tree_size = ovAtomTreePaddedSize[tree];
-    resetTreeCounters(padded_tree_size, tree_size, offset, 
-		      ovProcessedFlag,
-		      ovOKtoProcessFlag,
-		      ovChildrenStartIndex,
-		      ovChildrenCount,
-		      ovChildrenReported,
-		      ovSelfVolume,
-		      ovDV2);
+    uint tree = get_group_id(0);      //initial tree
+    while (tree < ntrees){
+
+      uint offset = ovTreePointer[tree];
+      uint tree_size = ovAtomTreeSize[tree];
+      uint padded_tree_size = ovAtomTreePaddedSize[tree];
+      resetTreeCounters(padded_tree_size, tree_size, offset, 
+			ovProcessedFlag,
+			ovOKtoProcessFlag,
+			ovChildrenStartIndex,
+			ovChildrenCount,
+			ovChildrenReported,
+			ovSelfVolume,
+			ovDV2);
+      tree += get_num_groups(0);
+    }
 }
 
 
@@ -113,36 +119,30 @@ void resetTreeSection(
 
 __kernel void resetBuffer(unsigned const int             bufferSize,
 			  unsigned const int             numBuffers,
-			  __global       real4* restrict ovAtomBuffer,
-			  __global       int*   restrict ovAtomLock
+			  __global       real4* restrict ovAtomBuffer
 #ifdef SUPPORTS_64_BIT_ATOMICS
 			  ,
 			  __global long*   restrict energyBuffer_long
 #endif
 ){
   unsigned int id = get_global_id(0);
-  if(id < PADDED_NUM_ATOMS) ovAtomLock[id] = 0;
 #ifdef SUPPORTS_64_BIT_ATOMICS
-  if(id < PADDED_NUM_ATOMS) energyBuffer_long[id] = 0;
-#endif
+  while (id < PADDED_NUM_ATOMS){
+    energyBuffer_long[id] = 0;
+    id += get_global_size(0);
+  }
+#else
   while(id < bufferSize*numBuffers){
     ovAtomBuffer[id] = (real4)0;
     id += get_global_size(0);
   }
-}
-
-__kernel void resetOvCount(unsigned const int             bufferSize,
-			   unsigned const int             numBuffers,
-			   __global       int*   restrict ovCount){
-  unsigned int id = get_global_id(0);
-  while(id < bufferSize*numBuffers){
-    ovCount[id] = 0;
-    id += get_global_size(0);
-  }
+#endif
 }
 
 
-__kernel void resetTree(__global const int*   restrict ovAtomTreePointer,
+__kernel void resetTree(const int ntrees,
+			__global const int*   restrict ovTreePointer,
+			__global const int*   restrict ovAtomTreePointer,
 			__global       int*   restrict ovAtomTreeSize,
 			__global const int*   restrict ovAtomTreePaddedSize,
 			__global       int*   restrict ovLevel,
@@ -165,14 +165,9 @@ __kernel void resetTree(__global const int*   restrict ovAtomTreePointer,
 			){
 
 
-  const unsigned int totalWarps = get_global_size(0)/get_local_size(0);
-  const unsigned int warp = get_global_id(0)/get_local_size(0);      //index of this warp
-
-  unsigned int section = warp; // initial assignment of warp to tree section
-
-  while(section < NUM_BLOCKS){
-    int atom = section*ATOMS_PER_SECTION; //pointer to start of section
-    unsigned int offset = ovAtomTreePointer[atom];
+  unsigned int section = get_group_id(0); // initial assignment of warp to tree section
+  while(section < ntrees){
+    unsigned int offset = ovTreePointer[section];
     unsigned int padded_tree_size = ovAtomTreePaddedSize[section];
 
     //each block resets one section of the tree
@@ -195,6 +190,6 @@ __kernel void resetTree(__global const int*   restrict ovAtomTreePointer,
 							 //ovLevel[offset] = 1;
 							 //ovLastAtom[offset] = atom;
     ovAtomTreeLock[section] = 0;
-    section += totalWarps; //next section  
+    section += get_num_groups(0); //next section  
   }
 }
