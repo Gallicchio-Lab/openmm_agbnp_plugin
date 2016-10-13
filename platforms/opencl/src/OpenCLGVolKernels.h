@@ -103,8 +103,7 @@ private:
     int total_tree_size;
     int num_sections;
     int num_twobody_max;
-    int pair_work_group_size; //group size for 2-body calculation
-    int ov_work_group_size; //group size for n-body calculation
+    int ov_work_group_size; //thread group size
     int num_compute_units;
     vector<int> tree_size;
     vector<int> padded_tree_size;

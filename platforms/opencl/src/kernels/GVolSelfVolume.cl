@@ -144,7 +144,7 @@ void computeSelfVolumes(const int ntrees,
       // Updates energy and derivative buffer for this section
       barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);
 #ifdef SUPPORTS_64_BIT_ATOMICS
-      if(atom >= 0){
+      if(atom >= 0 && atom < NUM_ATOMS){
 	real4 dv2 = -ovDV2[slot];
 	atom_add(&forceBuffers[atom], (long) (dv2.x*0x100000000));
 	atom_add(&forceBuffers[atom+PADDED_NUM_ATOMS], (long) (dv2.y*0x100000000));
@@ -163,7 +163,7 @@ void computeSelfVolumes(const int ntrees,
 	  int at = ovLastAtom[is];
 	  if(at >= 0){
 	    real energy = (ovLevel[is] == 1) ? ovSelfVolume[is] : 0; //energy is stored on 1-body nodes 
-	    ovAtomBuffer[buffer_offset + at] += (real4)(ovDV2[is].xyz, 0*energy);
+	    ovAtomBuffer[buffer_offset + at] += (real4)(ovDV2[is].xyz, energy);
 	  }
 	}
       }

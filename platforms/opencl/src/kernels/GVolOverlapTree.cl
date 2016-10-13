@@ -119,9 +119,6 @@ __kernel void InitOverlapTree_1body(
 }
 
 //this kernel counts the no. of 2-body overlaps for each atom, stores in ovChildrenCount
-//__kernel __attribute__((reqd_work_group_size(OV_WORK_GROUP_SIZE,1,1)))
-//void 
-
 __kernel void InitOverlapTreeCount(
     __global const int* restrict ovAtomTreePointer,    //pointers to atom trees
     __global const real4* restrict posq, //atomic positions
@@ -129,7 +126,7 @@ __kernel void InitOverlapTreeCount(
     __global const real* restrict global_gaussian_volume, //atomic Gaussian volume
     __global const real* restrict global_atomic_gamma, //atomic gammas
     
-    __global const unsigned int* restrict exclusions, //this and below from pair energy kernel
+    __global const unsigned int* restrict exclusions, //this and below from pair energy kernel (from customGBEnergyN2.cl)
     __global const ushort2* exclusionTiles,
 #ifdef USE_CUTOFF
     __global const int* restrict tiles, __global const unsigned int* restrict interactionCount, 
@@ -368,7 +365,6 @@ __kernel void InitOverlapTreeCount(
                 APPLY_PERIODIC_TO_POS_WITH_CENTER(local_posq[get_local_id(0)], blockCenterX)
                 SYNC_WARPS;
                 unsigned int tj = tgx;
-		int atom1_tree_ptr = ovAtomTreePointer[atom1];;
                 for (j = 0; j < TILE_SIZE; j++) {
 
                     int localAtom2Index = tbx+tj;
@@ -443,7 +439,6 @@ __kernel void InitOverlapTreeCount(
 
 
 // version of InitOverlapTreeCount optimized for CPU devices
-//  Similar to nonbonded_cpu.cl here we use a work group size of 1
 //  1 CPU core, instead of 32 as in the GPU-optimized version, loads a TILE_SIZE of interactions
 //  and process them 
 __kernel __attribute__((reqd_work_group_size(1,1,1))) 
@@ -467,302 +462,299 @@ void InitOverlapTreeCount_cpu(
 #endif
     __global       int*  restrict ovChildrenCount
     ){
-    const unsigned int totalWarps = get_global_size(0)/TILE_SIZE;
-    const unsigned int warp = get_global_id(0)/TILE_SIZE;
-    const unsigned int tgx = get_local_id(0) & (TILE_SIZE-1); //warp id in group
-    const unsigned int tbx = get_local_id(0) - tgx;           //id in warp
-    __local AtomData localData[FORCE_WORK_GROUP_SIZE];
+    __local AtomData localData[TILE_SIZE];
 
     INIT_VARS
 
     // First loop: process tiles that contain exclusions.
-    const unsigned int firstExclusionTile = FIRST_EXCLUSION_TILE+warp*(LAST_EXCLUSION_TILE-FIRST_EXCLUSION_TILE)/totalWarps;
-    const unsigned int lastExclusionTile = FIRST_EXCLUSION_TILE+(warp+1)*(LAST_EXCLUSION_TILE-FIRST_EXCLUSION_TILE)/totalWarps;
+    const unsigned int firstExclusionTile = FIRST_EXCLUSION_TILE+get_group_id(0)*(LAST_EXCLUSION_TILE-FIRST_EXCLUSION_TILE)/get_num_groups(0);
+    const unsigned int lastExclusionTile = FIRST_EXCLUSION_TILE+(get_group_id(0)+1)*(LAST_EXCLUSION_TILE-FIRST_EXCLUSION_TILE)/get_num_groups(0);
     for (int pos = firstExclusionTile; pos < lastExclusionTile; pos++) {
         const ushort2 tileIndices = exclusionTiles[pos];
         const unsigned int x = tileIndices.x;
         const unsigned int y = tileIndices.y;
-	unsigned int atom1 = y*TILE_SIZE + tgx;
 
-	int atom1_tree_ptr = ovAtomTreePointer[atom1];
+        // Load the data for this tile in local memory
+        for (int localAtomIndex = 0; localAtomIndex < TILE_SIZE; localAtomIndex++) {
+            unsigned int j = x*TILE_SIZE + localAtomIndex;
+            localData[localAtomIndex].posq = posq[j];
+            LOAD_LOCAL_PARAMETERS_FROM_GLOBAL
+        }
 
-        real4 posq1 = posq[atom1];
-        LOAD_ATOM1_PARAMETERS
-
-#ifdef USE_EXCLUSIONS
-        unsigned int excl = exclusions[pos*TILE_SIZE+tgx];
-#endif
         if (x == y) {
-            // This tile is on the diagonal.
+	  // This tile is on the diagonal.
+	  
+	  // loop over "atom1"
+	  for (unsigned int tgx = 0; tgx < TILE_SIZE; tgx++) {
+#ifdef USE_EXCLUSIONS
+	    unsigned int excl = exclusions[pos*TILE_SIZE+tgx];
+#endif
+	    uint atom1 = y*TILE_SIZE+tgx;
+	    // load atom1 parameters from global arrays
+            real4 posq1 = posq[atom1];
+	    real a1 = global_gaussian_exponent[atom1];
+	    real v1 = global_gaussian_volume[atom1];
+	    real gamma1 = global_atomic_gamma[atom1];
 
-            const unsigned int localAtomIndex = get_local_id(0);
-            localData[localAtomIndex].posq = posq1;
-            LOAD_LOCAL_PARAMETERS_FROM_1
-	    
-
-	    SYNC_WARPS;	    
+	    int atom1_tree_ptr = ovAtomTreePointer[atom1];
 	    
             for (unsigned int j = 0; j < TILE_SIZE; j++) {
-
-                int localAtom2Index = tbx+j;
-                real4 posq2 = localData[localAtom2Index].posq;
-                real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
+	      uint atom2 = x*TILE_SIZE+j;
+	      
+	      // load atom2 parameters from local arrays
+	      real4 posq2 = localData[j].posq;
+	      real a2 = localData[j].g.w;
+	      real v2 = localData[j].v;
+	      real gamma2 = localData[j].gamma;
+	      
+	      real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
 #ifdef USE_PERIODIC
-                APPLY_PERIODIC_TO_DELTA(delta)
+	      APPLY_PERIODIC_TO_DELTA(delta)
 #endif
-                real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
+	      real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
 #ifdef USE_CUTOFF
-                if (r2 < CUTOFF_SQUARED) {
+	      if (r2 < CUTOFF_SQUARED) {
 #endif
-                    real invR = RSQRT(r2);
-                    real r = r2*invR;
-                    LOAD_ATOM2_PARAMETERS
-                    int atom2 = x*TILE_SIZE+j;
+		real invR = RSQRT(r2);
+		real r = r2*invR;
 
 #ifdef USE_EXCLUSIONS
-                    bool isExcluded = !(excl & 0x1);
+		bool isExcluded = !(excl & 0x1);
 #endif
-
-                    if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS && atom1 < atom2) {
-		      COMPUTE_INTERACTION_COUNT
-		    }
-
-
+		    
+		if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS && atom1 < atom2) {
+		  COMPUTE_INTERACTION_COUNT
+		}
+		    
+		    
 #ifdef USE_CUTOFF
-                }
+	      }
 #endif
 #ifdef USE_EXCLUSIONS
-                excl >>= 1;
+	      excl >>= 1;
 #endif
-
-                SYNC_WARPS;
             }
+	  }
 
-	    SYNC_WARPS;
         }
         else { // This is an off-diagonal tile.
 
-            const unsigned int localAtomIndex = get_local_id(0);
-            unsigned int j = x*TILE_SIZE + tgx;
-            localData[localAtomIndex].posq = posq[j];
-            LOAD_LOCAL_PARAMETERS_FROM_GLOBAL
-
-            SYNC_WARPS;
+	  // loop over "atom1"
+	  for (unsigned int tgx = 0; tgx < TILE_SIZE; tgx++) {
 #ifdef USE_EXCLUSIONS
-            excl = (excl >> tgx) | (excl << (TILE_SIZE - tgx));
+	    unsigned int excl = exclusions[pos*TILE_SIZE+tgx];
 #endif
-            unsigned int tj = tgx;
+	    uint atom1 = y*TILE_SIZE+tgx;
+	    // load atom1 parameters from global arrays
+            real4 posq1 = posq[atom1];
+	    real a1 = global_gaussian_exponent[atom1];
+	    real v1 = global_gaussian_volume[atom1];
+	    real gamma1 = global_atomic_gamma[atom1];
 
-            for (j = 0; j < TILE_SIZE; j++) {
+	    int atom1_tree_ptr = ovAtomTreePointer[atom1];
+	    
+	    //loop over "atom2"
+            for (unsigned int j = 0; j < TILE_SIZE; j++) {
+	      uint atom2 = x*TILE_SIZE+j;
+	      
+	      // load atom2 parameters from local arrays
+	      real4 posq2 = localData[j].posq;
+	      real a2 = localData[j].g.w;
+	      real v2 = localData[j].v;
+	      real gamma2 = localData[j].gamma;
 
-                int localAtom2Index = tbx+tj;
-                real4 posq2 = localData[localAtom2Index].posq;
-                real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
+	      real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
 #ifdef USE_PERIODIC
-                APPLY_PERIODIC_TO_DELTA(delta)
+	      APPLY_PERIODIC_TO_DELTA(delta)
 #endif
-                real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
+	      real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
 #ifdef USE_CUTOFF
-                if (r2 < CUTOFF_SQUARED) {
+	      if (r2 < CUTOFF_SQUARED) {
 #endif
-                    real invR = RSQRT(r2);
-                    real r = r2*invR;
-                    LOAD_ATOM2_PARAMETERS
-                    int atom2 = x*TILE_SIZE+tj;
-
+		real invR = RSQRT(r2);
+		real r = r2*invR;
 #ifdef USE_EXCLUSIONS
-                    bool isExcluded = !(excl & 0x1);
+		bool isExcluded = !(excl & 0x1);
 #endif
-
-                    if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS) {
-                        COMPUTE_INTERACTION_COUNT
-                    }
+		    
+		if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS) {
+		      COMPUTE_INTERACTION_COUNT
+		}
 
 #ifdef USE_CUTOFF
-                }
+	      }
 #endif
 #ifdef USE_EXCLUSIONS
-                excl >>= 1;
+	      excl >>= 1;
 #endif
-                tj = (tj + 1) & (TILE_SIZE - 1);
+	    }
+	  }
 
-                SYNC_WARPS;
-            }
+	}
 
-
-            SYNC_WARPS;
-        }
     }
 
     int atom1;
 
     // Second loop: tiles without exclusions, either from the neighbor list (with cutoff) or just enumerating all
     // of them (no cutoff).
-
 #ifdef USE_CUTOFF
-    unsigned int numTiles = interactionCount[0];
-    int pos = (int) (warp*(numTiles > maxTiles ? NUM_BLOCKS*((long)NUM_BLOCKS+1)/2 : (long)numTiles)/totalWarps);
-    int end = (int) ((warp+1)*(numTiles > maxTiles ? NUM_BLOCKS*((long)NUM_BLOCKS+1)/2 : (long)numTiles)/totalWarps);
+    const unsigned int numTiles = interactionCount[0];
+    int pos = (int) (get_group_id(0)*(numTiles > maxTiles ? NUM_BLOCKS*((long)NUM_BLOCKS+1)/2 : numTiles)/get_num_groups(0));
+    int end = (int) ((get_group_id(0)+1)*(numTiles > maxTiles ? NUM_BLOCKS*((long)NUM_BLOCKS+1)/2 : numTiles)/get_num_groups(0));
 #else
-    int pos = (int) (warp*(long)numTiles/totalWarps);
-    int end = (int) ((warp+1)*(long)numTiles/totalWarps);
+    int pos = (int) (get_group_id(0)*(long)numTiles/get_num_groups(0));
+    int end = (int) ((get_group_id(0)+1)*(long)numTiles/get_num_groups(0));
 #endif
-    int skipBase = 0;
-    int currentSkipIndex = tbx;
-    __local int atomIndices[FORCE_WORK_GROUP_SIZE];
-    __local volatile int skipTiles[FORCE_WORK_GROUP_SIZE];
-    skipTiles[get_local_id(0)] = -1;
+    int nextToSkip = -1;
+    int currentSkipIndex = 0;
+    __local int atomIndices[TILE_SIZE];
 
     while (pos < end) {
         const bool isExcluded = false;
         bool includeTile = true;
 
         // Extract the coordinates of this tile.
-        
         int x, y;
         bool singlePeriodicCopy = false;
 #ifdef USE_CUTOFF
         if (numTiles <= maxTiles) {
-            x = tiles[pos];
-            real4 blockSizeX = blockSize[x];
-            singlePeriodicCopy = (0.5f*periodicBoxSize.x-blockSizeX.x >= CUTOFF &&
-                                  0.5f*periodicBoxSize.y-blockSizeX.y >= CUTOFF &&
-                                  0.5f*periodicBoxSize.z-blockSizeX.z >= CUTOFF);
+	  x = tiles[pos];
+	  real4 blockSizeX = blockSize[x];
+	  singlePeriodicCopy = (0.5f*periodicBoxSize.x-blockSizeX.x >= CUTOFF &&
+				0.5f*periodicBoxSize.y-blockSizeX.y >= CUTOFF &&
+				0.5f*periodicBoxSize.z-blockSizeX.z >= CUTOFF);
         }
         else
 #endif
-        {
-            y = (int) floor(NUM_BLOCKS+0.5f-SQRT((NUM_BLOCKS+0.5f)*(NUM_BLOCKS+0.5f)-2*pos));
-            x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
-            if (x < y || x >= NUM_BLOCKS) { // Occasionally happens due to roundoff error.
-                y += (x < y ? -1 : 1);
-                x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
-            }
-
-            // Skip over tiles that have exclusions, since they were already processed.
-
-            SYNC_WARPS;
-            while (skipTiles[tbx+TILE_SIZE-1] < pos) {
-                SYNC_WARPS;
-                if (skipBase+tgx < NUM_TILES_WITH_EXCLUSIONS) {
-                    ushort2 tile = exclusionTiles[skipBase+tgx];
-                    skipTiles[get_local_id(0)] = tile.x + tile.y*NUM_BLOCKS - tile.y*(tile.y+1)/2;
-                }
-                else
-                    skipTiles[get_local_id(0)] = end;
-                skipBase += TILE_SIZE;            
-                currentSkipIndex = tbx;
-                SYNC_WARPS;
-            }
-            while (skipTiles[currentSkipIndex] < pos)
-                currentSkipIndex++;
-            includeTile = (skipTiles[currentSkipIndex] != pos);
-        }
-
-	unsigned int atom1 = y*TILE_SIZE + tgx;
-
-	int atom1_tree_ptr = ovAtomTreePointer[atom1];
-
+	{
+	  y = (int) floor(NUM_BLOCKS+0.5f-SQRT((NUM_BLOCKS+0.5f)*(NUM_BLOCKS+0.5f)-2*pos));
+	  x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
+	  if (x < y || x >= NUM_BLOCKS) { // Occasionally happens due to roundoff error.
+	    y += (x < y ? -1 : 1);
+	    x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
+	  }
+	  
+	  // Skip over tiles that have exclusions, since they were already processed.
+	  
+	  while (nextToSkip < pos) {
+	    if (currentSkipIndex < NUM_TILES_WITH_EXCLUSIONS) {
+	      ushort2 tile = exclusionTiles[currentSkipIndex++];
+	      nextToSkip = tile.x + tile.y*NUM_BLOCKS - tile.y*(tile.y+1)/2;
+	    }
+	    else
+	      nextToSkip = end;
+	  }
+	  includeTile = (nextToSkip != pos);
+	}
         if (includeTile) {
-            // Load atom data for this tile.
 
-            real4 posq1 = posq[atom1];
-            LOAD_ATOM1_PARAMETERS
-            unsigned int localAtomIndex = get_local_id(0);
+	  // Load the data for this tile in local memory
+	  for (int localAtomIndex = 0; localAtomIndex < TILE_SIZE; localAtomIndex++) {
 #ifdef USE_CUTOFF
-            unsigned int j = (numTiles <= maxTiles ? interactingAtoms[pos*TILE_SIZE+tgx] : x*TILE_SIZE + tgx);
+	    unsigned int j = (numTiles <= maxTiles ? interactingAtoms[pos*TILE_SIZE+localAtomIndex] : x*TILE_SIZE+localAtomIndex);
 #else
-            unsigned int j = x*TILE_SIZE + tgx;
+	    unsigned int j = x*TILE_SIZE+localAtomIndex;
 #endif
-            atomIndices[get_local_id(0)] = j;
-            if (j < PADDED_NUM_ATOMS) {
-                localData[localAtomIndex].posq = posq[j];
-                LOAD_LOCAL_PARAMETERS_FROM_GLOBAL
-
-            }
-
-            SYNC_WARPS;
+	    atomIndices[localAtomIndex] = j;
+	    if (j < PADDED_NUM_ATOMS) {
+	      localData[localAtomIndex].posq = posq[j];
+	      LOAD_LOCAL_PARAMETERS_FROM_GLOBAL
+	    }
+	  }
 
 #ifdef USE_PERIODIC
-            if (singlePeriodicCopy) {
-                // The box is small enough that we can just translate all the atoms into a single periodic
-                // box, then skip having to apply periodic boundary conditions later.
-
-                real4 blockCenterX = blockCenter[x];
-                APPLY_PERIODIC_TO_POS_WITH_CENTER(posq1, blockCenterX)
-                APPLY_PERIODIC_TO_POS_WITH_CENTER(local_posq[get_local_id(0)], blockCenterX)
-                SYNC_WARPS;
-                unsigned int tj = tgx;
-		int atom1_tree_ptr = ovAtomTreePointer[atom1];;
-                for (j = 0; j < TILE_SIZE; j++) {
-
-                    int localAtom2Index = tbx+tj;
-                    real4 posq2 = local_posq[localAtom2Index];
-                    real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
-                    real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
-                    if (r2 < CUTOFF_SQUARED) {
-                        real invR = RSQRT(r2);
-                        real r = r2*invR;
-                        LOAD_ATOM2_PARAMETERS
-                        int atom2 = atomIndices[tbx+tj];
-
-
-
-                        if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS) {
-                            COMPUTE_INTERACTION_COUNT
-                        }	
-
-
-                    }
-                    tj = (tj + 1) & (TILE_SIZE - 1);
-
-                    SYNC_WARPS;
-                }
-            }
-            else
+	  if (singlePeriodicCopy) {
+	    // The box is small enough that we can just translate all the atoms into a single periodic
+	    // box, then skip having to apply periodic boundary conditions later.
+	    
+	    real4 blockCenterX = blockCenter[x];
+	    for (unsigned int tgx = 0; tgx < TILE_SIZE; tgx++) {
+	      APPLY_PERIODIC_TO_POS_WITH_CENTER(localData[tgx], blockCenterX)
+		}
+	    for (unsigned int tgx = 0; tgx < TILE_SIZE; tgx++) {
+	      unsigned int atom1 = y*TILE_SIZE+tgx;
+	      
+	      // load atom1 parameters from global arrays
+	      real4 posq1 = posq[atom1];
+	      real a1 = global_gaussian_exponent[atom1];
+	      real v1 = global_gaussian_volume[atom1];
+	      real gamma1 = global_atomic_gamma[atom1];
+	      
+	      int atom1_tree_ptr = ovAtomTreePointer[atom1];
+	      
+	      APPLY_PERIODIC_TO_POS_WITH_CENTER(posq1, blockCenterX)
+	      for (unsigned int j = 0; j < TILE_SIZE; j++) {
+		uint atom2 = atomIndices[j];
+		
+		// load atom2 parameters from local arrays
+		real4 posq2 = localData[j].posq;
+		real a2 = localData[j].g.w;
+		real v2 = localData[j].v;
+		real gamma2 = localData[j].gamma;
+		
+		real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
+		real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
+		if (r2 < CUTOFF_SQUARED) {
+		  real invR = RSQRT(r2);
+		  real r = r2*invR;
+		  
+		  if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS) {
+		    COMPUTE_INTERACTION_COUNT
+		  }	
+		  
+		  
+		}
+	      }
+	    }
+	  }
+	  else
 #endif
-            {
-                // We need to apply periodic boundary conditions separately for each interaction.
+         {
+	   // We need to apply periodic boundary conditions separately for each interaction.
 
-
-                unsigned int tj = tgx;
-                for (j = 0; j < TILE_SIZE; j++) {
-
-                    int localAtom2Index = tbx+tj;
-                    real4 posq2 = localData[localAtom2Index].posq;
-                    real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
+	   for (unsigned int tgx = 0; tgx < TILE_SIZE; tgx++) {
+	     uint atom1 = y*TILE_SIZE+tgx;
+	     
+	     // load atom1 parameters from global arrays
+	     real4 posq1 = posq[atom1];
+	     real a1 = global_gaussian_exponent[atom1];
+	     real v1 = global_gaussian_volume[atom1];
+	     real gamma1 = global_atomic_gamma[atom1];
+	     
+	     int atom1_tree_ptr = ovAtomTreePointer[atom1];
+	     
+	     for (unsigned int j = 0; j < TILE_SIZE; j++) {
+	       uint atom2 = atomIndices[j];
+	       
+	       // load atom2 parameters from local arrays
+	       real4 posq2 = localData[j].posq;
+	       real a2 = localData[j].g.w;
+	       real v2 = localData[j].v;
+	       real gamma2 = localData[j].gamma;
+	       
+	       real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
 #ifdef USE_PERIODIC
-                    APPLY_PERIODIC_TO_DELTA(delta)
+	       APPLY_PERIODIC_TO_DELTA(delta)
 #endif
-                    real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
+	       real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
 #ifdef USE_CUTOFF
-                    if (r2 < CUTOFF_SQUARED) {
+	       if (r2 < CUTOFF_SQUARED) {
 #endif
-                        real invR = RSQRT(r2);
-                        real r = r2*invR;
-                        LOAD_ATOM2_PARAMETERS
-                        int atom2 = atomIndices[tbx+tj];
-
-                        if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS) {
-                            COMPUTE_INTERACTION_COUNT
-                        }
-
-
+		 real invR = RSQRT(r2);
+		 real r = r2*invR;
+	       
+		 if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS) {
+		   COMPUTE_INTERACTION_COUNT
+		 }
 #ifdef USE_CUTOFF
-                    }
+	       }
 #endif
-                    tj = (tj + 1) & (TILE_SIZE - 1);
-
-                    SYNC_WARPS;
-                }
-
-                SYNC_WARPS;
-            }
-        
-
-
-        }
-        pos++;
+	     }
+	   }
+	 }
+	}
+	pos++;
     }
 }
 
@@ -1162,6 +1154,351 @@ __kernel void InitOverlapTree(
 
 }
 
+
+
+// version of InitOverlapTree optimized for CPU devices
+//  1 CPU core, instead of 32 as in the GPU-optimized version, loads a TILE_SIZE of interactions
+//  and process them 
+__kernel __attribute__((reqd_work_group_size(1,1,1))) 
+void InitOverlapTree_cpu(
+    __global const int* restrict ovAtomTreePointer,    //pointers to atom trees
+    __global       int* restrict ovAtomTreeSize,       //actual sizes
+    __global const int* restrict ovAtomTreePaddedSize, //padded allocated sizes
+    __global       int* restrict ovAtomTreeLock,       //tree locks
+    
+    __global const real4* restrict posq, //atomic positions
+    __global const real* restrict global_gaussian_exponent, //atomic Gaussian exponent
+    __global const real* restrict global_gaussian_volume, //atomic Gaussian volume
+    __global const real* restrict global_atomic_gamma, //atomic gammas
+    
+    __global const unsigned int* restrict exclusions, //this and below from pair energy kernel
+    __global const ushort2* exclusionTiles,
+#ifdef USE_CUTOFF
+    __global const int* restrict tiles, __global const unsigned int* restrict interactionCount, 
+    real4 periodicBoxSize, real4 invPeriodicBoxSize,
+    real4 periodicBoxVecX, real4 periodicBoxVecY, real4 periodicBoxVecZ, 
+    unsigned int maxTiles, __global const real4* restrict blockCenter,
+    __global const real4* restrict blockSize, __global const int* restrict interactingAtoms
+#else
+    unsigned int numTiles,
+#endif
+    
+    __global       int*  restrict ovLevel, //this and below define tree
+    __global       real* restrict ovVolume,
+    __global       real* restrict ovVSfp,
+    __global       real* restrict ovGamma1i,
+    __global       real4* restrict ovG,
+    __global       real4* restrict ovDV1,
+
+    __global       int*  restrict ovLastAtom,
+    __global       int*  restrict ovRootIndex,
+    __global       int*  restrict ovChildrenStartIndex,
+    __global       int*  restrict ovChildrenCount,
+    __global       int*  restrict ovChildrenCountTop,
+    __global       int*  restrict ovChildrenCountBottom
+    ){
+    __local AtomData localData[TILE_SIZE];
+    int children_count;
+
+    INIT_VARS
+
+    // First loop: process tiles that contain exclusions.
+    const unsigned int firstExclusionTile = FIRST_EXCLUSION_TILE+get_group_id(0)*(LAST_EXCLUSION_TILE-FIRST_EXCLUSION_TILE)/get_num_groups(0);
+    const unsigned int lastExclusionTile = FIRST_EXCLUSION_TILE+(get_group_id(0)+1)*(LAST_EXCLUSION_TILE-FIRST_EXCLUSION_TILE)/get_num_groups(0);
+    for (int pos = firstExclusionTile; pos < lastExclusionTile; pos++) {
+        const ushort2 tileIndices = exclusionTiles[pos];
+        const unsigned int x = tileIndices.x;
+        const unsigned int y = tileIndices.y;
+
+        // Load the data for this tile in local memory
+        for (int localAtomIndex = 0; localAtomIndex < TILE_SIZE; localAtomIndex++) {
+            unsigned int j = x*TILE_SIZE + localAtomIndex;
+            localData[localAtomIndex].posq = posq[j];
+            LOAD_LOCAL_PARAMETERS_FROM_GLOBAL
+        }
+
+        if (x == y) {
+	  // This tile is on the diagonal.
+	  
+	  // loop over "atom1"
+	  for (unsigned int tgx = 0; tgx < TILE_SIZE; tgx++) {
+#ifdef USE_EXCLUSIONS
+	    unsigned int excl = exclusions[pos*TILE_SIZE+tgx];
+#endif
+	    uint atom1 = y*TILE_SIZE+tgx;
+	    // load atom1 parameters from global arrays
+            real4 posq1 = posq[atom1];
+	    real a1 = global_gaussian_exponent[atom1];
+	    real v1 = global_gaussian_volume[atom1];
+	    real gamma1 = global_atomic_gamma[atom1];
+
+	    int atom1_tree_ptr = ovAtomTreePointer[atom1];
+	    int atom1_children_start = ovChildrenStartIndex[atom1_tree_ptr];	    
+
+            for (unsigned int j = 0; j < TILE_SIZE; j++) {
+	      uint atom2 = x*TILE_SIZE+j;
+	      
+	      // load atom2 parameters from local arrays
+	      real4 posq2 = localData[j].posq;
+	      real a2 = localData[j].g.w;
+	      real v2 = localData[j].v;
+	      real gamma2 = localData[j].gamma;
+	      
+	      real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
+#ifdef USE_PERIODIC
+	      APPLY_PERIODIC_TO_DELTA(delta)
+#endif
+	      real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
+#ifdef USE_CUTOFF
+	      if (r2 < CUTOFF_SQUARED) {
+#endif
+		real invR = RSQRT(r2);
+		real r = r2*invR;
+
+#ifdef USE_EXCLUSIONS
+		bool isExcluded = !(excl & 0x1);
+#endif
+		    
+		if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS && atom1 < atom2) {
+		  COMPUTE_INTERACTION_STORE1
+		}
+		    
+		    
+#ifdef USE_CUTOFF
+	      }
+#endif
+#ifdef USE_EXCLUSIONS
+	      excl >>= 1;
+#endif
+            }
+	  }
+
+        }
+        else { // This is an off-diagonal tile.
+
+	  // loop over "atom1"
+	  for (unsigned int tgx = 0; tgx < TILE_SIZE; tgx++) {
+#ifdef USE_EXCLUSIONS
+	    unsigned int excl = exclusions[pos*TILE_SIZE+tgx];
+#endif
+	    uint atom1 = y*TILE_SIZE+tgx;
+	    // load atom1 parameters from global arrays
+            real4 posq1 = posq[atom1];
+	    real a1 = global_gaussian_exponent[atom1];
+	    real v1 = global_gaussian_volume[atom1];
+	    real gamma1 = global_atomic_gamma[atom1];
+
+	    int atom1_tree_ptr = ovAtomTreePointer[atom1];
+	    int atom1_children_start = ovChildrenStartIndex[atom1_tree_ptr];
+
+	    //loop over "atom2"
+            for (unsigned int j = 0; j < TILE_SIZE; j++) {
+	      uint atom2 = x*TILE_SIZE+j;
+	      
+	      // load atom2 parameters from local arrays
+	      real4 posq2 = localData[j].posq;
+	      real a2 = localData[j].g.w;
+	      real v2 = localData[j].v;
+	      real gamma2 = localData[j].gamma;
+
+	      real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
+#ifdef USE_PERIODIC
+	      APPLY_PERIODIC_TO_DELTA(delta)
+#endif
+	      real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
+#ifdef USE_CUTOFF
+	      if (r2 < CUTOFF_SQUARED) {
+#endif
+		real invR = RSQRT(r2);
+		real r = r2*invR;
+#ifdef USE_EXCLUSIONS
+		bool isExcluded = !(excl & 0x1);
+#endif
+		    
+		if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS) {
+		      COMPUTE_INTERACTION_STORE1
+		}
+
+#ifdef USE_CUTOFF
+	      }
+#endif
+#ifdef USE_EXCLUSIONS
+	      excl >>= 1;
+#endif
+	    }
+	  }
+
+	}
+
+    }
+
+    int atom1;
+
+    // Second loop: tiles without exclusions, either from the neighbor list (with cutoff) or just enumerating all
+    // of them (no cutoff).
+#ifdef USE_CUTOFF
+    const unsigned int numTiles = interactionCount[0];
+    int pos = (int) (get_group_id(0)*(numTiles > maxTiles ? NUM_BLOCKS*((long)NUM_BLOCKS+1)/2 : numTiles)/get_num_groups(0));
+    int end = (int) ((get_group_id(0)+1)*(numTiles > maxTiles ? NUM_BLOCKS*((long)NUM_BLOCKS+1)/2 : numTiles)/get_num_groups(0));
+#else
+    int pos = (int) (get_group_id(0)*(long)numTiles/get_num_groups(0));
+    int end = (int) ((get_group_id(0)+1)*(long)numTiles/get_num_groups(0));
+#endif
+    int nextToSkip = -1;
+    int currentSkipIndex = 0;
+    __local int atomIndices[TILE_SIZE];
+
+    while (pos < end) {
+        const bool isExcluded = false;
+        bool includeTile = true;
+
+        // Extract the coordinates of this tile.
+        int x, y;
+        bool singlePeriodicCopy = false;
+#ifdef USE_CUTOFF
+        if (numTiles <= maxTiles) {
+	  x = tiles[pos];
+	  real4 blockSizeX = blockSize[x];
+	  singlePeriodicCopy = (0.5f*periodicBoxSize.x-blockSizeX.x >= CUTOFF &&
+				0.5f*periodicBoxSize.y-blockSizeX.y >= CUTOFF &&
+				0.5f*periodicBoxSize.z-blockSizeX.z >= CUTOFF);
+        }
+        else
+#endif
+	{
+	  y = (int) floor(NUM_BLOCKS+0.5f-SQRT((NUM_BLOCKS+0.5f)*(NUM_BLOCKS+0.5f)-2*pos));
+	  x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
+	  if (x < y || x >= NUM_BLOCKS) { // Occasionally happens due to roundoff error.
+	    y += (x < y ? -1 : 1);
+	    x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
+	  }
+	  
+	  // Skip over tiles that have exclusions, since they were already processed.
+	  
+	  while (nextToSkip < pos) {
+	    if (currentSkipIndex < NUM_TILES_WITH_EXCLUSIONS) {
+	      ushort2 tile = exclusionTiles[currentSkipIndex++];
+	      nextToSkip = tile.x + tile.y*NUM_BLOCKS - tile.y*(tile.y+1)/2;
+	    }
+	    else
+	      nextToSkip = end;
+	  }
+	  includeTile = (nextToSkip != pos);
+	}
+        if (includeTile) {
+
+	  // Load the data for this tile in local memory
+	  for (int localAtomIndex = 0; localAtomIndex < TILE_SIZE; localAtomIndex++) {
+#ifdef USE_CUTOFF
+	    unsigned int j = (numTiles <= maxTiles ? interactingAtoms[pos*TILE_SIZE+localAtomIndex] : x*TILE_SIZE+localAtomIndex);
+#else
+	    unsigned int j = x*TILE_SIZE+localAtomIndex;
+#endif
+	    atomIndices[localAtomIndex] = j;
+	    if (j < PADDED_NUM_ATOMS) {
+	      localData[localAtomIndex].posq = posq[j];
+	      LOAD_LOCAL_PARAMETERS_FROM_GLOBAL
+	    }
+	  }
+
+#ifdef USE_PERIODIC
+	  if (singlePeriodicCopy) {
+	    // The box is small enough that we can just translate all the atoms into a single periodic
+	    // box, then skip having to apply periodic boundary conditions later.
+	    
+	    real4 blockCenterX = blockCenter[x];
+	    for (unsigned int tgx = 0; tgx < TILE_SIZE; tgx++) {
+	      APPLY_PERIODIC_TO_POS_WITH_CENTER(localData[tgx], blockCenterX)
+		}
+	    for (unsigned int tgx = 0; tgx < TILE_SIZE; tgx++) {
+	      unsigned int atom1 = y*TILE_SIZE+tgx;
+	      
+	      // load atom1 parameters from global arrays
+	      real4 posq1 = posq[atom1];
+	      real a1 = global_gaussian_exponent[atom1];
+	      real v1 = global_gaussian_volume[atom1];
+	      real gamma1 = global_atomic_gamma[atom1];
+	      
+	      int atom1_tree_ptr = ovAtomTreePointer[atom1];
+	      int atom1_children_start = ovChildrenStartIndex[atom1_tree_ptr];	      
+
+	      APPLY_PERIODIC_TO_POS_WITH_CENTER(posq1, blockCenterX)
+	      for (unsigned int j = 0; j < TILE_SIZE; j++) {
+		uint atom2 = atomIndices[j];
+		
+		// load atom2 parameters from local arrays
+		real4 posq2 = localData[j].posq;
+		real a2 = localData[j].g.w;
+		real v2 = localData[j].v;
+		real gamma2 = localData[j].gamma;
+		
+		real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
+		real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
+		if (r2 < CUTOFF_SQUARED) {
+		  real invR = RSQRT(r2);
+		  real r = r2*invR;
+		  
+		  if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS) {
+		    COMPUTE_INTERACTION_STORE1
+		  }	
+		  
+		  
+		}
+	      }
+	    }
+	  }
+	  else
+#endif
+         {
+	   // We need to apply periodic boundary conditions separately for each interaction.
+
+	   for (unsigned int tgx = 0; tgx < TILE_SIZE; tgx++) {
+	     uint atom1 = y*TILE_SIZE+tgx;
+	     
+	     // load atom1 parameters from global arrays
+	     real4 posq1 = posq[atom1];
+	     real a1 = global_gaussian_exponent[atom1];
+	     real v1 = global_gaussian_volume[atom1];
+	     real gamma1 = global_atomic_gamma[atom1];
+	     
+	     int atom1_tree_ptr = ovAtomTreePointer[atom1];
+	     int atom1_children_start = ovChildrenStartIndex[atom1_tree_ptr];	     
+	     for (unsigned int j = 0; j < TILE_SIZE; j++) {
+	       uint atom2 = atomIndices[j];
+	       
+	       // load atom2 parameters from local arrays
+	       real4 posq2 = localData[j].posq;
+	       real a2 = localData[j].g.w;
+	       real v2 = localData[j].v;
+	       real gamma2 = localData[j].gamma;
+	       
+	       real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
+#ifdef USE_PERIODIC
+	       APPLY_PERIODIC_TO_DELTA(delta)
+#endif
+	       real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
+#ifdef USE_CUTOFF
+	       if (r2 < CUTOFF_SQUARED) {
+#endif
+		 real invR = RSQRT(r2);
+		 real r = r2*invR;
+	       
+		 if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS) {
+		   COMPUTE_INTERACTION_STORE1
+		 }
+#ifdef USE_CUTOFF
+	       }
+#endif
+	     }
+	   }
+	 }
+	}
+	pos++;
+    }
+}
+
+
+
 //this kernel initializes the tree to be processed by ComputeOverlapTree()
 //it assumes that 2-body overlaps are in place
 __kernel void resetComputeOverlapTree(const int ntrees,
@@ -1426,7 +1763,7 @@ __kernel void SortOverlapTree2body(
     }
     atom += get_global_size(0);
   }
-  //barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);
+  barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);
 }
 
 
@@ -1724,7 +2061,7 @@ __kernel __attribute__((reqd_work_group_size(OV_WORK_GROUP_SIZE,1,1)))
 	if(local_id == OV_WORK_GROUP_SIZE - 1) n_buffer = sum + ov_count;
 	barrier(CLK_LOCAL_MEM_FENCE);
 	
-	if(n_buffer > 0){ //nothing to process
+	if(n_buffer > 0){ //something to process
 	  
 	  //  step 3: insert data for overlaps "j" into global buffers
 	  if(letsgo && sibling_start >= 0 && sibling_count > 0){
@@ -1760,7 +2097,7 @@ __kernel __attribute__((reqd_work_group_size(OV_WORK_GROUP_SIZE,1,1)))
 	      real4 delta = (real4) (posq2.xyz - posq1.xyz, 0.0f);
 	      real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
 	      COMPUTE_INTERACTION_GVOLONLY
-		fij = gvol > VolMinA ? 1 : 0;
+	      fij = gvol > VolMinA ? 1 : 0;
 	      vij = gvol;
 	    }
 	    tree_pos_buffer[pos] = fij; //for prefix sum below

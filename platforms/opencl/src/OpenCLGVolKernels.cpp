@@ -90,12 +90,6 @@ void OpenCLCalcGVolForceKernel::init_tree_size(int pad_modulo,
   int heavyatoms_per_section = num_heavy/num_sections;
   int extra_heavy_atoms = num_heavy % num_sections;
   int nmin = OpenCLContext::TileSize/2;
-
-  cout << "num_heavy = " << num_heavy << endl;
-  cout << "num_sections = " << num_sections << endl;
-  cout << "heavyatoms_per_section = " <<  num_heavy/num_sections << endl;
-  cout << "extra_heavy_atoms =" << num_heavy % num_sections << endl;
-
   if(heavyatoms_per_section >= nmin){
     // more than minimum number of atoms per section
     // standard behavior: heavy atoms are distributed among the available compute units
@@ -381,14 +375,11 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
 
       bool deviceIsCpu = (cl.getDevice().getInfo<CL_DEVICE_TYPE>() == CL_DEVICE_TYPE_CPU);
       if(deviceIsCpu){
-	// for consistency with cpu nonbonded kernel, use TileSize for workgroup for pairwise kernels
-	pair_work_group_size = OpenCLContext::TileSize;
-	// for CPU the force wg size defaults to 1, set it to TileSize
-	ov_work_group_size = 1;//OpenCLContext::TileSize;
+	// for CPU the force wg size defaults to 1
+	ov_work_group_size = 1;
 	num_compute_units = cl.getDevice().getInfo<CL_DEVICE_MAX_COMPUTE_UNITS>();
       }else{
-	// for GPU use default block size for both pair kernel and tree kernels
-	pair_work_group_size = nb.getForceThreadBlockSize();
+	// for GPU use default block size
 	ov_work_group_size = nb.getForceThreadBlockSize();
 	num_compute_units = nb.getNumForceThreadBlocks();
       }
@@ -418,8 +409,7 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
 	std::cout <<  "getNumForceThreadBlocks: " << nb.getNumForceThreadBlocks() << std::endl;
 	std::cout <<  "getForceThreadBlockSize: " << nb.getForceThreadBlockSize() << std::endl;
 	std::cout <<  "Num Tree Sections: " << num_sections << std::endl;
-	std::cout <<  "Pair Work Group Size: " << pair_work_group_size << std::endl;
-	std::cout <<  "Overlap Work Group Size: " << ov_work_group_size << std::endl;
+	std::cout <<  "Work Group Size: " << ov_work_group_size << std::endl;
 	std::cout <<  "Tree Size: " <<  total_tree_size << std::endl;
       }
 
@@ -485,7 +475,7 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
     {
       //Reset tree kernel
       map<string, string> defines;
-      defines["FORCE_WORK_GROUP_SIZE"] = cl.intToString(pair_work_group_size);
+      defines["FORCE_WORK_GROUP_SIZE"] = cl.intToString(ov_work_group_size);
       defines["NUM_ATOMS"] = cl.intToString(total_atoms_in_tree);
       defines["PADDED_NUM_ATOMS"] = cl.intToString(cl.getPaddedNumAtoms());
       defines["NUM_BLOCKS"] = cl.intToString(num_sections);
@@ -576,7 +566,7 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
       if (usePeriodic)
 	pairValueDefines["USE_PERIODIC"] = "1";
       pairValueDefines["USE_EXCLUSIONS"] = "1";
-      pairValueDefines["FORCE_WORK_GROUP_SIZE"] = cl.intToString(pair_work_group_size);
+      pairValueDefines["FORCE_WORK_GROUP_SIZE"] = cl.intToString(ov_work_group_size);
       pairValueDefines["CUTOFF"] = cl.doubleToString(cutoffDistance);
       pairValueDefines["CUTOFF_SQUARED"] = cl.doubleToString(cutoffDistance*cutoffDistance);
       pairValueDefines["NUM_ATOMS"] = cl.intToString(total_atoms_in_tree);
@@ -915,7 +905,12 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
       kernel.setArg<cl::Buffer>(index++, ovChildrenStartIndex->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
 
-      kernel_name = "InitOverlapTreeCount";
+      bool deviceIsCpu = (cl.getDevice().getInfo<CL_DEVICE_TYPE>() == CL_DEVICE_TYPE_CPU);
+      if(deviceIsCpu){
+	kernel_name = "InitOverlapTreeCount_cpu";
+      }else{
+	kernel_name = "InitOverlapTreeCount";
+      }
       replacements["KERNEL_NAME"] = kernel_name;
 
       if(verbose) cout << "compiling " << kernel_name << " ... ";
@@ -961,7 +956,11 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
       kernel.setArg<cl::Buffer>(index++, ovChildrenCountTop->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ovChildrenCountBottom->getDeviceBuffer());
 
-      kernel_name = "InitOverlapTree";
+      if(deviceIsCpu){
+	kernel_name = "InitOverlapTree_cpu";
+      }else{
+	kernel_name = "InitOverlapTree";
+      }
       replacements["KERNEL_NAME"] = kernel_name;
       if(verbose) cout << "compiling " << kernel_name << " ... ";
       InitOverlapTreeKernel = cl::Kernel(program, kernel_name.c_str());
@@ -1187,7 +1186,7 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
     {
       //Self volumes kernel
       map<string, string> defines;
-      defines["FORCE_WORK_GROUP_SIZE"] = cl.intToString(pair_work_group_size);
+      defines["FORCE_WORK_GROUP_SIZE"] = cl.intToString(ov_work_group_size);
       defines["NUM_ATOMS"] = cl.intToString(total_atoms_in_tree);
       defines["PADDED_NUM_ATOMS"] = cl.intToString(cl.getPaddedNumAtoms());
       defines["NUM_BLOCKS"] = cl.intToString(cl.getNumAtomBlocks());
@@ -1242,44 +1241,15 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
 
     }
 
-#ifdef NOTUSED
-    {
-      //Self volumes reduction kernel (pass 1)
-      map<string, string> defines;
-      defines["FORCE_WORK_GROUP_SIZE"] = cl.intToString(pair_work_group_size);
-      defines["NUM_ATOMS"] = cl.intToString(total_atom_in_tree);
-      defines["PADDED_NUM_ATOMS"] = cl.intToString(cl.getPaddedNumAtoms());
-      defines["NUM_BLOCKS"] = cl.intToString(cl.getNumAtomBlocks());
-      defines["TILE_SIZE"] = cl.intToString(OpenCLContext::TileSize);
-      defines["NTILES_IN_BLOCK"] = "1";//cl.intToString(pair_work_group_size/OpenCLContext::TileSize);
-
-      map<string, string> replacements;
-      string kernel_name = "reduceSelfVolumes_tree";
-      
-      string file = OpenCLGVolKernelSources::GVolReduceTree;
-      cl::Program program = cl.createProgram(file, defines);
-      reduceSelfVolumesKernel_tree = cl::Kernel(program, kernel_name.c_str());
-      cl::Kernel kernel = reduceSelfVolumesKernel_tree;
-      int index = 0;
-      kernel.setArg<cl_int>(index++, cl.getPaddedNumAtoms());
-      kernel.setArg<cl_int>(index++, num_sections);
-      kernel.setArg<cl_int>(index++, total_tree_size);
-      kernel.setArg<cl::Buffer>(index++, ovAtomBuffer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovSelfVolume->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovDV2->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovLastAtom->getDeviceBuffer());
-    }
-#endif
-
     {
       //Self volumes reduction kernel (pass 2)
       map<string, string> defines;
-      defines["FORCE_WORK_GROUP_SIZE"] = cl.intToString(pair_work_group_size);
+      defines["FORCE_WORK_GROUP_SIZE"] = cl.intToString(ov_work_group_size);
       defines["NUM_ATOMS"] = cl.intToString(total_atoms_in_tree);
       defines["PADDED_NUM_ATOMS"] = cl.intToString(cl.getPaddedNumAtoms());
       defines["NUM_BLOCKS"] = cl.intToString(cl.getNumAtomBlocks());
       defines["TILE_SIZE"] = cl.intToString(OpenCLContext::TileSize);
-      defines["NTILES_IN_BLOCK"] = "1";//cl.intToString(pair_work_group_size/OpenCLContext::TileSize);
+      defines["NTILES_IN_BLOCK"] = "1";//cl.intToString(ov_work_group_size/OpenCLContext::TileSize);
 
       map<string, string> replacements;
       string kernel_name = "reduceSelfVolumes_buffer";
@@ -1324,16 +1294,22 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
 
 
 
+
   if(verbose) cout << "Executing InitOverlapTreeCountKernel" << endl;
   // compute numbers of 2-body overlaps, that children counts of 1-body overlaps
-  cl.executeKernel(InitOverlapTreeCountKernel, pair_work_group_size*nblocks, pair_work_group_size);
+  cl.executeKernel(InitOverlapTreeCountKernel, ov_work_group_size*nblocks, ov_work_group_size);
+
 
   if(verbose) cout << "Executing reduceovCountBufferKernel" << endl;
   // do a prefix sum of 2-body counts to compute children start indexes to store 2-body overlaps computed by InitOverlapTreeKernel below
   cl.executeKernel(reduceovCountBufferKernel, ov_work_group_size*nblocks, ov_work_group_size);
 
+
+
   if(verbose) cout << "Executing InitOverlapTreeKernel" << endl;
-  cl.executeKernel(InitOverlapTreeKernel, pair_work_group_size*nblocks, pair_work_group_size);
+  cl.executeKernel(InitOverlapTreeKernel, ov_work_group_size*nblocks, ov_work_group_size);
+
+
 
   if(verbose) cout << "Executing resetComputeOverlapTreeKernel" << endl;
   cl.executeKernel(resetComputeOverlapTreeKernel, ov_work_group_size*nblocks, ov_work_group_size);
@@ -1372,10 +1348,8 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
     cl.executeKernel(InitRescanOverlapTreeKernel, ov_work_group_size*nblocks, ov_work_group_size);
 
 
-
     if(verbose) cout << "Executing RescanOverlapTreeKernel" << endl;
     cl.executeKernel(RescanOverlapTreeKernel, ov_work_group_size*nblocks, ov_work_group_size);
-
 
     if(verbose) cout << "Executing resetSelfVolumesKernel" << endl;
     cl.executeKernel(resetSelfVolumesKernel, ov_work_group_size*nblocks, ov_work_group_size);
@@ -1383,13 +1357,11 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
     if(verbose) cout << "Executing computeSelfVolumesKernel" << endl;
     cl.executeKernel(computeSelfVolumesKernel, ov_work_group_size*nblocks, ov_work_group_size);
 
-
   }
 
   if(verbose) cout << "Executing reduceSelfVolumesKernel_buffer" << endl;
   cl.executeKernel(reduceSelfVolumesKernel_buffer, ov_work_group_size*nblocks, ov_work_group_size);
   if(verbose) cout << "Done GVOLSA kernels execution" << endl;
-
 
   if(false){
     vector<int> size(num_sections);
@@ -1505,7 +1477,9 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
   //force/energy buffer
   if(false){
     if(useLong){
+      // TO BE FIXED: OpenMM's energy buffer is the max number of threads, not the number of atoms
       vector<cl_float> energies(cl.getPaddedNumAtoms());
+
       vector<cl_long> energies_long(cl.getPaddedNumAtoms());
       cl.getEnergyBuffer().download(energies);
       std::cout << "OpenMM Energy Buffer:" << std::endl;
