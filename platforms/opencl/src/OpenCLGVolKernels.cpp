@@ -86,7 +86,7 @@ void OpenCLCalcGVolForceKernel::init_tree_size(int pad_modulo,
     if(!atom_ishydrogen[i]) num_heavy += 1;
   }
 
-#define SMALL_SECTIONS
+  //#define SMALL_SECTIONS
 #ifdef SMALL_SECTIONS
   // this constructs many tree sections with 16 to 32 atoms per section
 
@@ -1327,80 +1327,53 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
 
   }
 
-
   int nblocks = num_compute_units;
-
 
   if(verbose) cout << "Executing resetTreeKernel" << endl;
   //here workgroups cycle through tree sections to reset the tree section
   cl.executeKernel(resetTreeKernel, ov_work_group_size*nblocks, ov_work_group_size);
 
-
-
   if(verbose) cout << "Executing resetBufferKernel" << endl;
   // resets either ovAtomBuffer and long energy buffer
   cl.executeKernel(resetBufferKernel, ov_work_group_size*nblocks, ov_work_group_size);
-
 
   if(verbose) cout << "Executing InitOverlapTreeKernel_1body_1" << endl;
   //fills up tree with 1-body overlaps
   cl.executeKernel(InitOverlapTreeKernel_1body_1, ov_work_group_size*nblocks, ov_work_group_size);
 
-
-
-
   if(verbose) cout << "Executing InitOverlapTreeCountKernel" << endl;
   // compute numbers of 2-body overlaps, that children counts of 1-body overlaps
   cl.executeKernel(InitOverlapTreeCountKernel, ov_work_group_size*nblocks, ov_work_group_size);
-
 
   if(verbose) cout << "Executing reduceovCountBufferKernel" << endl;
   // do a prefix sum of 2-body counts to compute children start indexes to store 2-body overlaps computed by InitOverlapTreeKernel below
   cl.executeKernel(reduceovCountBufferKernel, ov_work_group_size*nblocks, ov_work_group_size);
 
-
-
   if(verbose) cout << "Executing InitOverlapTreeKernel" << endl;
   cl.executeKernel(InitOverlapTreeKernel, ov_work_group_size*nblocks, ov_work_group_size);
-
-
 
   if(verbose) cout << "Executing resetComputeOverlapTreeKernel" << endl;
   cl.executeKernel(resetComputeOverlapTreeKernel, ov_work_group_size*nblocks, ov_work_group_size);
 
-
   if(verbose) cout << "Executing ComputeOverlapTree_1passKernel" << endl;
   cl.executeKernel(ComputeOverlapTree_1passKernel, ov_work_group_size*nblocks, ov_work_group_size);
-
-
 
   if(verbose) cout << "Executing resetSelfVolumesKernel" << endl;
   cl.executeKernel(resetSelfVolumesKernel, ov_work_group_size*nblocks, ov_work_group_size);
 
-
-
   if(verbose) cout << "Executing computeSelfVolumesKernel" << endl;
   cl.executeKernel(computeSelfVolumesKernel, ov_work_group_size*nblocks, ov_work_group_size);
-
-
-
-
 
   if(true){
     //rescan for energy with reduced radii
     if(verbose) cout << "Executing InitOverlapTreeKernel_1body_2 " << endl;
     cl.executeKernel(InitOverlapTreeKernel_1body_2, ov_work_group_size*nblocks, ov_work_group_size);
 
-
-
     if(verbose) cout << "Executing ResetRescanOverlapTreeKernel" << endl;
     cl.executeKernel(ResetRescanOverlapTreeKernel, ov_work_group_size*nblocks, ov_work_group_size);
 
-
-
     if(verbose) cout << "Executing InitRescanOverlapTreeKernel" << endl;
     cl.executeKernel(InitRescanOverlapTreeKernel, ov_work_group_size*nblocks, ov_work_group_size);
-
 
     if(verbose) cout << "Executing RescanOverlapTreeKernel" << endl;
     cl.executeKernel(RescanOverlapTreeKernel, ov_work_group_size*nblocks, ov_work_group_size);
@@ -1410,8 +1383,8 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
 
     if(verbose) cout << "Executing computeSelfVolumesKernel" << endl;
     cl.executeKernel(computeSelfVolumesKernel, ov_work_group_size*nblocks, ov_work_group_size);
-
   }
+
 
   if(verbose) cout << "Executing reduceSelfVolumesKernel_buffer" << endl;
   cl.executeKernel(reduceSelfVolumesKernel_buffer, ov_work_group_size*nblocks, ov_work_group_size);
