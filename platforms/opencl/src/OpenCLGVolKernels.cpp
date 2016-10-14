@@ -86,6 +86,57 @@ void OpenCLCalcGVolForceKernel::init_tree_size(int pad_modulo,
     if(!atom_ishydrogen[i]) num_heavy += 1;
   }
 
+#define SMALL_SECTIONS
+#ifdef SMALL_SECTIONS
+  // this constructs many tree sections with 16 to 32 atoms per section
+
+  std::cout << "Number of heavy atoms: " << num_heavy << std::endl; 
+  std::cout << "Number of compute units: " << num_compute_units << std::endl; 
+
+  int heavyatoms_per_section = num_heavy/num_compute_units;
+  int nmin = OpenCLContext::TileSize/2;
+  int nmax = OpenCLContext::TileSize;
+  if(heavyatoms_per_section < nmin){
+    // not enough atoms to feed the available compute units 
+    // use fewer tree sections
+    // place nmin heavy atoms in each section, and the remainder in the last.
+    num_sections = num_heavy/nmin;
+  }else if(heavyatoms_per_section > nmax){
+    // more than minimum number of atoms per section
+    // use a multiple of the number of compute devices to have at least
+    // nmax atoms per section
+    num_sections = num_compute_units;
+    while(num_heavy/num_sections >= nmax){
+      num_sections += num_compute_units;
+    }
+  }else{
+    // within limits, use as many sections as compute units
+    // distribute atoms equally among them
+    num_sections = num_compute_units;
+  }
+  heavyatoms_per_section = num_heavy/num_sections;
+  int extra_heavy_atoms = num_heavy % num_sections;
+  natoms_in_tree.resize(num_sections);
+  int iatom = 0;
+  for(int section = 0 ; section < num_sections ; section++){
+    natoms_in_tree[section] = 0;
+    int nheavy_in_section = 0;
+    int target_nheavy = heavyatoms_per_section;
+    if(section < extra_heavy_atoms) target_nheavy += 1;
+    while(nheavy_in_section < target_nheavy && iatom < cl.getNumAtoms()){
+      if(!atom_ishydrogen[iatom]) nheavy_in_section += 1;
+      iatom += 1;
+      natoms_in_tree[section] += 1;
+    }
+  }
+  //at this point all heavy atoms have been placed
+  //trailing hydrogen atoms do not need to be inserted in tree
+
+#else
+
+  // this constructs as many tree sections as compute units
+  // sections may contain many atoms
+
   num_sections = num_compute_units;
   int heavyatoms_per_section = num_heavy/num_sections;
   int extra_heavy_atoms = num_heavy % num_sections;
@@ -140,6 +191,9 @@ void OpenCLCalcGVolForceKernel::init_tree_size(int pad_modulo,
       }
     }
   }
+  
+#endif
+
 
   total_atoms_in_tree = 0;
   for(int section = 0 ; section < num_sections; section++){
@@ -390,13 +444,13 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
 
       if(verbose){
 	for(int i = 0; i < num_sections; i++){
-	  cout << "Tn: " << tree_size[i] << " " << padded_tree_size[i] << " " << natoms_in_tree[i] << " " << tree_pointer[i] << " " << first_atom[i] << endl;
+	  cout << "Tn: " << i << " " << tree_size[i] << " " << padded_tree_size[i] << " " << natoms_in_tree[i] << " " << tree_pointer[i] << " " << first_atom[i] << endl;
 	}
 	std::cout << "Tree size: " << total_tree_size << std::endl;
 
-	for(int i = 0; i < total_atoms_in_tree; i++){
-          cout << "Atom: " << i << " Slot: " << atom_tree_pointer[i] << endl;
-        }
+	//for(int i = 0; i < total_atoms_in_tree; i++){
+        //  cout << "Atom: " << i << " Slot: " << atom_tree_pointer[i] << endl;
+        //}
       }
 
       if(verbose){
@@ -1382,7 +1436,7 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
   }
 
 
-  if(verbose){
+  if(false){
     float self_volume = 0.0;
     vector<cl_float> self_volumes(total_tree_size);
     vector<cl_float> volumes(total_tree_size);
