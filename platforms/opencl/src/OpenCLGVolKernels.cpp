@@ -86,13 +86,11 @@ void OpenCLCalcGVolForceKernel::init_tree_size(int pad_modulo,
     if(!atom_ishydrogen[i]) num_heavy += 1;
   }
 
+  if(verbose_level > 0) std::cout << "Number of heavy atoms: " << num_heavy << std::endl; 
+
   //#define SMALL_SECTIONS
 #ifdef SMALL_SECTIONS
   // this constructs many tree sections with 16 to 32 atoms per section
-
-  std::cout << "Number of heavy atoms: " << num_heavy << std::endl; 
-  std::cout << "Number of compute units: " << num_compute_units << std::endl; 
-
   int heavyatoms_per_section = num_heavy/num_compute_units;
   int nmin = OpenCLContext::TileSize/2;
   int nmax = OpenCLContext::TileSize;
@@ -290,6 +288,8 @@ int OpenCLCalcGVolForceKernel::copy_tree_to_device(void){
 }
 
 void OpenCLCalcGVolForceKernel::initialize(const System& system, const GVolForce& force) {
+    verbose_level = 0;
+
     if (cl.getPlatformData().contexts.size() > 1)
       throw OpenMMException("GVolForce does not support using multiple OpenCL devices");
     
@@ -349,8 +349,7 @@ void OpenCLCalcGVolForceKernel::initialize(const System& system, const GVolForce
 double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForces, bool includeEnergy) {
   OpenCLNonbondedUtilities& nb = cl.getNonbondedUtilities();
   bool useLong = cl.getSupports64BitGlobalAtomics();
-  bool verbose = false;
-
+  bool verbose = verbose_level > 0;
   niterations += 1;
 
   if (!hasCreatedKernels) {
@@ -407,25 +406,17 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
 	nn += noverlaps[i];
 	nn2 += noverlaps_2body[i];
       }
-      if(verbose) cout << "Number of overlaps: " << nn << endl;
-      if(verbose) cout << "Number of 2-body overlaps: " << nn2 << endl;
-      
-      //compute maximum number of 2-body overlaps
-      num_twobody_max = 0;
-      for(int i = 0; i < noverlaps_2body.size(); i++){
-	if(noverlaps_2body[i] > num_twobody_max) num_twobody_max = noverlaps_2body[i];
-      }
-      // double estimate
-      num_twobody_max *= 2;//1.5f;
-      //pad mod 8
-      num_twobody_max = 8*((num_twobody_max+8-1)/8);
-      if(verbose) cout << "Max2Body: " << num_twobody_max << endl;
 
-      cout << "Device: " << cl.getDevice().getInfo<CL_DEVICE_NAME>()  << endl;
-      cout << "MaxSharedMem: " << cl.getDevice().getInfo<CL_DEVICE_LOCAL_MEM_SIZE>()  << endl;
-      cout << "CompUnits: " << cl.getDevice().getInfo<CL_DEVICE_MAX_COMPUTE_UNITS>()  << endl;
-      cout << "Max Work Group Size: " << cl.getDevice().getInfo<CL_DEVICE_MAX_WORK_GROUP_SIZE>()  << endl;
-      cout << "Supports 64bit Atomics: " << useLong << endl;
+      if(verbose_level > 0) cout << "Number of overlaps: " << nn << endl;
+      if(verbose_level > 0) cout << "Number of 2-body overlaps: " << nn2 << endl;
+      
+      if(verbose_level > 0){
+	cout << "Device: " << cl.getDevice().getInfo<CL_DEVICE_NAME>()  << endl;
+	cout << "MaxSharedMem: " << cl.getDevice().getInfo<CL_DEVICE_LOCAL_MEM_SIZE>()  << endl;
+	cout << "CompUnits: " << cl.getDevice().getInfo<CL_DEVICE_MAX_COMPUTE_UNITS>()  << endl;
+	cout << "Max Work Group Size: " << cl.getDevice().getInfo<CL_DEVICE_MAX_WORK_GROUP_SIZE>()  << endl;
+	cout << "Supports 64bit Atomics: " << useLong << endl;
+      }
 
       bool deviceIsCpu = (cl.getDevice().getInfo<CL_DEVICE_TYPE>() == CL_DEVICE_TYPE_CPU);
       if(deviceIsCpu){
@@ -442,18 +433,20 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
       int pad_modulo = ov_work_group_size;
       init_tree_size(pad_modulo, noverlaps, noverlaps_2body);
 
-      if(verbose){
+      if(verbose_level > 0) std::cout << "Tree size: " << total_tree_size << std::endl;
+
+      if(verbose_level > 2){
 	for(int i = 0; i < num_sections; i++){
 	  cout << "Tn: " << i << " " << tree_size[i] << " " << padded_tree_size[i] << " " << natoms_in_tree[i] << " " << tree_pointer[i] << " " << first_atom[i] << endl;
 	}
-	std::cout << "Tree size: " << total_tree_size << std::endl;
-
-	//for(int i = 0; i < total_atoms_in_tree; i++){
-        //  cout << "Atom: " << i << " Slot: " << atom_tree_pointer[i] << endl;
-        //}
+	if(verbose_level > 4){
+	  for(int i = 0; i < total_atoms_in_tree; i++){
+	    cout << "Atom: " << i << " Slot: " << atom_tree_pointer[i] << endl;
+	  }
+	}
       }
 
-      if(verbose){
+      if(verbose_level > 0){
 	std::cout <<  "Num atoms: " << cl.getNumAtoms() << std::endl;
 	std::cout <<  "Padded Num Atoms: " << cl.getPaddedNumAtoms() << std::endl;
 	std::cout <<  "Num Atom Blocks: " << cl.getNumAtomBlocks() << std::endl;
@@ -634,7 +627,6 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
       int endExclusionIndex = (cl.getContextIndex()+1)*numExclusionTiles/numContexts;
       pairValueDefines["FIRST_EXCLUSION_TILE"] = cl.intToString(startExclusionIndex);
       pairValueDefines["LAST_EXCLUSION_TILE"] = cl.intToString(endExclusionIndex);
-      pairValueDefines["MAX_2BODY_SIZE"] = cl.intToString(num_twobody_max);
       pairValueDefines["OV_WORK_GROUP_SIZE"] = cl.intToString(ov_work_group_size);
       pairValueDefines["SMALL_VOLUME"] = "1.e-4";
 
@@ -1146,11 +1138,6 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
       kernel.setArg<cl::Buffer>(index++,  i_buffer_temp->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++,  atomj_buffer_temp->getDeviceBuffer());
 
-      if(verbose){
-	int kernelMaxThreads = ComputeOverlapTreeKernel.getWorkGroupInfo<CL_KERNEL_WORK_GROUP_SIZE>(cl.getDevice());
-	std::cout <<  "ComputeOverlapTreeKernel Max group: " << kernelMaxThreads   << std::endl;
-      }
-
 
       //2-body volumes sort kernel
       kernel_name = "SortOverlapTree2body";
@@ -1329,66 +1316,65 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
 
   int nblocks = num_compute_units;
 
-  if(verbose) cout << "Executing resetTreeKernel" << endl;
+  if(verbose_level > 2) cout << "Executing resetTreeKernel" << endl;
   //here workgroups cycle through tree sections to reset the tree section
   cl.executeKernel(resetTreeKernel, ov_work_group_size*nblocks, ov_work_group_size);
 
-  if(verbose) cout << "Executing resetBufferKernel" << endl;
+  if(verbose_level > 2) cout << "Executing resetBufferKernel" << endl;
   // resets either ovAtomBuffer and long energy buffer
   cl.executeKernel(resetBufferKernel, ov_work_group_size*nblocks, ov_work_group_size);
 
-  if(verbose) cout << "Executing InitOverlapTreeKernel_1body_1" << endl;
+  if(verbose_level > 2) cout << "Executing InitOverlapTreeKernel_1body_1" << endl;
   //fills up tree with 1-body overlaps
   cl.executeKernel(InitOverlapTreeKernel_1body_1, ov_work_group_size*nblocks, ov_work_group_size);
 
-  if(verbose) cout << "Executing InitOverlapTreeCountKernel" << endl;
+  if(verbose_level > 2) cout << "Executing InitOverlapTreeCountKernel" << endl;
   // compute numbers of 2-body overlaps, that children counts of 1-body overlaps
   cl.executeKernel(InitOverlapTreeCountKernel, ov_work_group_size*nblocks, ov_work_group_size);
 
-  if(verbose) cout << "Executing reduceovCountBufferKernel" << endl;
+  if(verbose_level > 2) cout << "Executing reduceovCountBufferKernel" << endl;
   // do a prefix sum of 2-body counts to compute children start indexes to store 2-body overlaps computed by InitOverlapTreeKernel below
   cl.executeKernel(reduceovCountBufferKernel, ov_work_group_size*nblocks, ov_work_group_size);
 
-  if(verbose) cout << "Executing InitOverlapTreeKernel" << endl;
+  if(verbose_level > 2) cout << "Executing InitOverlapTreeKernel" << endl;
   cl.executeKernel(InitOverlapTreeKernel, ov_work_group_size*nblocks, ov_work_group_size);
 
-  if(verbose) cout << "Executing resetComputeOverlapTreeKernel" << endl;
+  if(verbose_level > 2) cout << "Executing resetComputeOverlapTreeKernel" << endl;
   cl.executeKernel(resetComputeOverlapTreeKernel, ov_work_group_size*nblocks, ov_work_group_size);
 
-  if(verbose) cout << "Executing ComputeOverlapTree_1passKernel" << endl;
+  if(verbose_level > 2) cout << "Executing ComputeOverlapTree_1passKernel" << endl;
   cl.executeKernel(ComputeOverlapTree_1passKernel, ov_work_group_size*nblocks, ov_work_group_size);
 
-  if(verbose) cout << "Executing resetSelfVolumesKernel" << endl;
+  if(verbose_level > 2) cout << "Executing resetSelfVolumesKernel" << endl;
   cl.executeKernel(resetSelfVolumesKernel, ov_work_group_size*nblocks, ov_work_group_size);
 
-  if(verbose) cout << "Executing computeSelfVolumesKernel" << endl;
+  if(verbose_level > 2) cout << "Executing computeSelfVolumesKernel" << endl;
   cl.executeKernel(computeSelfVolumesKernel, ov_work_group_size*nblocks, ov_work_group_size);
 
   if(true){
     //rescan for energy with reduced radii
-    if(verbose) cout << "Executing InitOverlapTreeKernel_1body_2 " << endl;
+    if(verbose_level > 2) cout << "Executing InitOverlapTreeKernel_1body_2 " << endl;
     cl.executeKernel(InitOverlapTreeKernel_1body_2, ov_work_group_size*nblocks, ov_work_group_size);
 
-    if(verbose) cout << "Executing ResetRescanOverlapTreeKernel" << endl;
+    if(verbose_level > 2) cout << "Executing ResetRescanOverlapTreeKernel" << endl;
     cl.executeKernel(ResetRescanOverlapTreeKernel, ov_work_group_size*nblocks, ov_work_group_size);
 
-    if(verbose) cout << "Executing InitRescanOverlapTreeKernel" << endl;
+    if(verbose_level > 2) cout << "Executing InitRescanOverlapTreeKernel" << endl;
     cl.executeKernel(InitRescanOverlapTreeKernel, ov_work_group_size*nblocks, ov_work_group_size);
 
-    if(verbose) cout << "Executing RescanOverlapTreeKernel" << endl;
+    if(verbose_level > 2) cout << "Executing RescanOverlapTreeKernel" << endl;
     cl.executeKernel(RescanOverlapTreeKernel, ov_work_group_size*nblocks, ov_work_group_size);
 
-    if(verbose) cout << "Executing resetSelfVolumesKernel" << endl;
+    if(verbose_level > 2) cout << "Executing resetSelfVolumesKernel" << endl;
     cl.executeKernel(resetSelfVolumesKernel, ov_work_group_size*nblocks, ov_work_group_size);
 
-    if(verbose) cout << "Executing computeSelfVolumesKernel" << endl;
+    if(verbose_level > 2) cout << "Executing computeSelfVolumesKernel" << endl;
     cl.executeKernel(computeSelfVolumesKernel, ov_work_group_size*nblocks, ov_work_group_size);
   }
 
 
-  if(verbose) cout << "Executing reduceSelfVolumesKernel_buffer" << endl;
+  if(verbose_level > 2) cout << "Executing reduceSelfVolumesKernel_buffer" << endl;
   cl.executeKernel(reduceSelfVolumesKernel_buffer, ov_work_group_size*nblocks, ov_work_group_size);
-  if(verbose) cout << "Done GVOLSA kernels execution" << endl;
 
   if(false){
     vector<int> size(num_sections);
@@ -1409,7 +1395,7 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
   }
 
 
-  if(false){
+  if(verbose_level > 4){
     float self_volume = 0.0;
     vector<cl_float> self_volumes(total_tree_size);
     vector<cl_float> volumes(total_tree_size);
@@ -1430,7 +1416,6 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
 
 
     ovSelfVolume->download(self_volumes);
-    ovVolume->download(volumes);
     ovVolume->download(volumes);
     ovLevel->download(level);
     ovLastAtom->download(last_atom);
@@ -1543,7 +1528,7 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
     //std::cout << "Volume (from self volumes):" << mol_volume <<std::endl;
   }
 
-  if(verbose) cout << "Done with GVolSA energy" << endl;
+  if(verbose_level > 2) cout << "Done with GVolSA energy" << endl;
   
   return 0.0;
 }

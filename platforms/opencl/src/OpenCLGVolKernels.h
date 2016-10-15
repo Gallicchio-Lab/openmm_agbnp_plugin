@@ -102,7 +102,6 @@ private:
     int total_atoms_in_tree;
     int total_tree_size;
     int num_sections;
-    int num_twobody_max;
     int ov_work_group_size; //thread group size
     int num_compute_units;
     vector<int> tree_size;
@@ -185,6 +184,9 @@ private:
     OpenMM::OpenCLArray*  tree_pos_buffer_temp;
     OpenMM::OpenCLArray*  i_buffer_temp;
     OpenMM::OpenCLArray*  atomj_buffer_temp;
+
+
+    int verbose_level;
 };
 
 } // namespace GVolPlugin
