@@ -1,6 +1,7 @@
 %module GVolplugin
 
-%import(module="simtk.openmm") "OpenMMSwigHeaders.i"
+%import(module="simtk.openmm") "swig/OpenMMSwigHeaders.i"
+%include "swig/typemaps.i"
 
 
 /*
@@ -16,7 +17,7 @@ namespace std {
 };
 
 %{
-#include  "GVolForce.h"
+#include "GVolForce.h"
 #include "OpenMM.h" 
 #include "OpenMMAmoeba.h"
 #include "OpenMMDrude.h"
@@ -26,25 +27,11 @@ namespace std {
 
 
 
-/*
- * The code below strips all units before the wrapper
- * functions are called. This code also converts numpy
- * arrays to lists.
-*/
-
 %pythoncode %{
 import simtk.openmm as mm
 import simtk.unit as unit
 %}
 
-
-/* strip the units off of all input arguments */
-%pythonprepend %{
-try:
-    args=mm.stripUnits(args)
-except UnboundLocalError:
-    pass
-%}
 
 
 /*
@@ -61,6 +48,7 @@ namespace GVolPlugin {
 
 class GVolForce : public OpenMM::Force {
 public:
+
     GVolForce();
 
     int getNumParticles() const;
@@ -68,6 +56,16 @@ public:
     void addParticle(double radius, double gamma, bool ishydrogen);
 
     void updateParametersInContext(OpenMM::Context& context);
+
+    void setCutoffDistance(double distance);
+
+    enum NonbondedMethod {
+      NoCutoff =  0,
+      CutoffNonPeriodic =  1,
+      CutoffPeriodic =  2
+    };
+
+    void setNonbondedMethod(NonbondedMethod method);
 
     /*
      * The reference parameters to this function are output values.
