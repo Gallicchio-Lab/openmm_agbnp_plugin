@@ -376,6 +376,8 @@ class DesmondDMSFile(object):
                     if gb_parms:
                         print('Adding GVol force ...')
                         gb = GVolForce()
+                        gb.setNonbondedMethod(methodMap[nonbondedMethod])
+                        gb.setCutoffDistance(nonbondedCutoff)
                         # add particles
                         for i in range(len(gb_parms)):
                             [radiusN,chargeN,gammaN,alphaN,hbtype,hbwN,ishydrogenN] = gb_parms[i]
@@ -610,13 +612,13 @@ class DesmondDMSFile(object):
                 
             nb.addException(p0, p1, q_ij, new_sigma, new_epsilon, True)
             
-        n_total = self._conn.execute("""SELECT COUNT(*) FROM pair_12_6_es_term""").fetchone()
-        n_in_exclusions = self._conn.execute("""SELECT COUNT(*)
-        FROM exclusion INNER JOIN pair_12_6_es_term
-        ON (exclusion.p0==pair_12_6_es_term.p0 AND exclusion.p1==pair_12_6_es_term.p1)
-        OR (exclusion.p1==pair_12_6_es_term.p0 AND exclusion.p0==pair_12_6_es_term.p1)""").fetchone()
-        if not n_total == n_in_exclusions:
-            raise NotImplementedError('All pair_12_6_es_term must have a corresponding exclusion')
+        #n_total = self._conn.execute("""SELECT COUNT(*) FROM pair_12_6_es_term""").fetchone()
+        #n_in_exclusions = self._conn.execute("""SELECT COUNT(*)
+        #FROM exclusion INNER JOIN pair_12_6_es_term
+        #ON (exclusion.p0==pair_12_6_es_term.p0 AND exclusion.p1==pair_12_6_es_term.p1)
+        #OR (exclusion.p1==pair_12_6_es_term.p0 AND exclusion.p0==pair_12_6_es_term.p1)""").fetchone()
+        #if not n_total == n_in_exclusions:
+        #    raise NotImplementedError('All pair_12_6_es_term must have a corresponding exclusion')
 
         return nb, cnb
 
