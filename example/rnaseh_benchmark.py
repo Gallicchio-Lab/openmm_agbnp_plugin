@@ -8,19 +8,18 @@ from datetime import datetime
 
 shutil.copyfile('rnaseh_2.dms','rnaseh_3.dms')
 testDes = DesmondDMSFile('rnaseh_3.dms')
-system = testDes.createSystem(nonbondedCutoff=1*nanometer, OPLS = True, implicitSolvent='GVolSA')
+system = testDes.createSystem(nonbondedMethod=CutoffNonPeriodic,nonbondedCutoff=1*nanometer, OPLS = True, implicitSolvent='GVolSA')
 
 #Choose Reference or OpenCL platform
 
 #platform = Platform.getPlatformByName('Reference')
 #prop = {}
-
 platform = Platform.getPlatformByName('OpenCL')
 prop = {"OpenCLPrecision" : "single"}
 #prop= {"OpenCLPrecision" : "single", "OpenCLPlatformIndex" : "1", "OpenCLDeviceIndex": "0"};
 
 integrator = LangevinIntegrator(300*kelvin, 1.0/picosecond, 0.001*picoseconds)
-simulation = Simulation(testDes.topology, system, integrator,platform)
+simulation = Simulation(testDes.topology, system, integrator, platform, prop)
 print "Using platform %s" % simulation.context.getPlatform().getName()
 
 simulation.context.setPositions(testDes.positions)
