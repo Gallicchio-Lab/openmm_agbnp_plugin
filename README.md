@@ -1,9 +1,11 @@
-# OpenMM GaussVol plugin
+# OpenMM AGBNP plugin
 
-A plugin that implements the Gaussian molecular volume and surface area model[1,2] in OpenMM.
+** under construction **
+
+A plugin that will implement the AGBNP implicit solvent model [1,2] in OpenMM.
 
 Emilio Gallicchio <egallicchio@brooklyn.cuny.edu>
-Last Modified: October 2016
+Last Modified: January 2017
 
 
 ## License
@@ -29,15 +31,15 @@ Locate the OpenMM installation directory, otherwise it will default to `/usr/loc
 Download this plugin package from github:
 
 ```
-git clone https://github.com/egallicc/openmm_gaussvol_plugin.git
+git clone https://github.com/egallicc/openmm_agbnp_plugin.git
 ```
 
 Build and install the plugin with cmake. For example, assuming a unix system and a `conda` environment:
 ```
 . ~/miniconda2/bin/activate
-mkdir build_openmm_gaussvol_plugin
-cd build_openmm_gaussvol_plugin
-ccmake -i ../openmm_gaussvol_plugin
+mkdir build_openmm_agbnp_plugin
+cd build_openmm_agbnp_plugin
+ccmake -i ../openmm_agbnp_plugin
 ```
 
 Hit `c` (configure) until all variables are correctly set, then `g` to generate the makefiles. `OPENMM_DIR` should point to the OpenMM installation directory. `CMAKE_INSTALL_PREFIX` normally is the same as `OPENMM_DIR`. The plugin requires the python API. You need `python` and `swig` to install it.
@@ -54,19 +56,20 @@ The last two steps may need superuser access depending on the installation targe
 
 ## Test
 
-`cd` to the directory where you cloned the `openmm_gaussvol_plugin` sources. Then:
+`cd` to the directory where you cloned the `openmm_agbnp_plugin` sources. Then:
 
 ```
 cd example
 export OPENMM_PLUGIN_DIR=<openmm_dir>/lib/plugins
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:<openmm_dir>/lib:<openmm_dir>lib/plugins
-python test_gaussvol.py
+python test_agbnp.py
 ```
 
 where `<openmm_dir>` is the OpenMM installation directory.
 
 ## Relevant references:
 
-1. Grant, J. A., and B. T. Pickup. "A Gaussian description of molecular shape." The Journal of Physical Chemistry 99.11 (1995): 3503-3510.
+1. Gallicchio E., and R.M. Levy. AGBNP, an analytic implicit solvent model suitable for molecular dynamics simulations and high-resolution modeling, J. Comp. Chem. 25, 479-499 (2004).
 2. Gallicchio, Emilio, Kristina Paris, and Ronald M. Levy. "The AGBNP2 implicit solvation model." Journal of chemical theory and computation 5.9 (2009): 2544-2564.
+
 
