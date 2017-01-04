@@ -1,6 +1,6 @@
 # OpenMM AGBNP plugin
 
-** under construction **
+**under construction**
 
 A plugin that will implement the AGBNP implicit solvent model [1,2] in OpenMM.
 
