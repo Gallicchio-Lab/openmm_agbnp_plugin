@@ -1,8 +1,8 @@
-#ifndef OPENMM_REFERENCEGVolKERNELFACTORY_H_
-#define OPENMM_REFERENCEGVolKERNELFACTORY_H_
+#ifndef OPENMM_REFERENCEAGBNPKERNELFACTORY_H_
+#define OPENMM_REFERENCEAGBNPKERNELFACTORY_H_
 
 /* -------------------------------------------------------------------------- *
- *                                   OpenMM-GVol                              *
+ *                                   OpenMM-AGBNP                              *
  * -------------------------------------------------------------------------- */
 
 #include "openmm/KernelFactory.h"
@@ -11,14 +11,14 @@ namespace OpenMM {
 
 /**
  * This KernelFactory creates kernels for the reference implementation of the 
- * GVol plugin.
+ * AGBNP plugin.
  */
 
-class ReferenceGVolKernelFactory : public KernelFactory {
+class ReferenceAGBNPKernelFactory : public KernelFactory {
 public:
     KernelImpl* createKernelImpl(std::string name, const Platform& platform, ContextImpl& context) const;
 };
 
 } // namespace OpenMM
 
-#endif /*OPENMM_REFERENCEGVolKERNELFACTORY_H_*/
+#endif /*OPENMM_REFERENCEAGBNPKERNELFACTORY_H_*/

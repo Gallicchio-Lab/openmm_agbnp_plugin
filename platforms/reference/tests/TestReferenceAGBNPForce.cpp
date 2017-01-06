@@ -1,12 +1,12 @@
 /* -------------------------------------------------------------------------- *
- *                              OpenMM-GVol                                 *
+ *                              OpenMM-AGBNP                                 *
  * -------------------------------------------------------------------------- */
 
 /**
- * This tests the Reference implementation of GVolForce.
+ * This tests the Reference implementation of AGBNPForce.
  */
 
-#include "GVolForce.h"
+#include "AGBNPForce.h"
 #include "openmm/internal/AssertionUtilities.h"
 #include "openmm/Context.h"
 #include "openmm/Platform.h"
@@ -16,15 +16,15 @@
 #include <iostream>
 #include <vector>
 
-using namespace GVolPlugin;
+using namespace AGBNPPlugin;
 using namespace OpenMM;
 using namespace std;
 
-extern "C" OPENMM_EXPORT void registerGVolReferenceKernelFactories();
+extern "C" OPENMM_EXPORT void registerAGBNPReferenceKernelFactories();
 
 void testForce() {
     System system;
-    GVolForce* force = new GVolForce();
+    AGBNPForce* force = new AGBNPForce();
     system.addForce(force);
     //read from stdin
     int numParticles = 0;
@@ -75,7 +75,7 @@ void testForce() {
 
 int main() {
   try {
-    registerGVolReferenceKernelFactories();
+    registerAGBNPReferenceKernelFactories();
     testForce();
 	//        testChangingParameters();
   }

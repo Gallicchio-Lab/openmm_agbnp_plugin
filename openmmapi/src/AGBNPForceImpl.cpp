@@ -1,12 +1,12 @@
 /* -------------------------------------------------------------------------- *
- *                            OpenMM-GVol                                   *
+ *                            OpenMM-AGBNP                                   *
  * -------------------------------------------------------------------------- */
 
 #ifdef WIN32
   #define _USE_MATH_DEFINES // Needed to get M_PI
 #endif
-#include "internal/GVolForceImpl.h"
-#include "GVolKernels.h"
+#include "internal/AGBNPForceImpl.h"
+#include "AGBNPKernels.h"
 #include "openmm/OpenMMException.h"
 #include "openmm/internal/ContextImpl.h"
 #include <cmath>
@@ -14,31 +14,31 @@
 #include <set>
 #include <sstream>
 
-using namespace GVolPlugin;
+using namespace AGBNPPlugin;
 using namespace OpenMM;
 using namespace std;
 
-GVolForceImpl::GVolForceImpl(const GVolForce& owner) : owner(owner) {
+AGBNPForceImpl::AGBNPForceImpl(const AGBNPForce& owner) : owner(owner) {
 }
 
-GVolForceImpl::~GVolForceImpl() {
+AGBNPForceImpl::~AGBNPForceImpl() {
 }
 
-void GVolForceImpl::initialize(ContextImpl& context) {
-    kernel = context.getPlatform().createKernel(CalcGVolForceKernel::Name(), context);
-    kernel.getAs<CalcGVolForceKernel>().initialize(context.getSystem(), owner);
+void AGBNPForceImpl::initialize(ContextImpl& context) {
+    kernel = context.getPlatform().createKernel(CalcAGBNPForceKernel::Name(), context);
+    kernel.getAs<CalcAGBNPForceKernel>().initialize(context.getSystem(), owner);
 }
 
-double GVolForceImpl::calcForcesAndEnergy(ContextImpl& context, bool includeForces, bool includeEnergy, int groups) {
-  return kernel.getAs<CalcGVolForceKernel>().execute(context, includeForces, includeEnergy);
+double AGBNPForceImpl::calcForcesAndEnergy(ContextImpl& context, bool includeForces, bool includeEnergy, int groups) {
+  return kernel.getAs<CalcAGBNPForceKernel>().execute(context, includeForces, includeEnergy);
 }
 
-std::vector<std::string> GVolForceImpl::getKernelNames() {
+std::vector<std::string> AGBNPForceImpl::getKernelNames() {
     std::vector<std::string> names;
-    names.push_back(CalcGVolForceKernel::Name());
+    names.push_back(CalcAGBNPForceKernel::Name());
     return names;
 }
 
-void GVolForceImpl::updateParametersInContext(ContextImpl& context) {
-    kernel.getAs<CalcGVolForceKernel>().copyParametersToContext(context, owner);
+void AGBNPForceImpl::updateParametersInContext(ContextImpl& context) {
+    kernel.getAs<CalcAGBNPForceKernel>().copyParametersToContext(context, owner);
 }

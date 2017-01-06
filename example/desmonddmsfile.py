@@ -392,6 +392,35 @@ class DesmondDMSFile(object):
                 else:
                     print('Warning: GVol is not supported in this version')
 
+            if implicitSolvent is 'AGBNP':
+                #load AGBNP plugin if available
+                try:
+                    from AGBNPplugin import AGBNPForce
+                    AGBNPEnabled = True
+                except ImportError:
+                    AGBNPEnabled = False
+                #sets up AGBNP
+                if AGBNPEnabled:
+                    gb_parms = self._get_agbnp2_params()
+                    if gb_parms:
+                        print('Adding AGBNP force ...')
+                        gb = AGBNPForce()
+                        gb.setNonbondedMethod(methodMap[nonbondedMethod])
+                        gb.setCutoffDistance(nonbondedCutoff)
+                        # add particles
+                        for i in range(len(gb_parms)):
+                            [radiusN,chargeN,gammaN,alphaN,hbtype,hbwN,ishydrogenN] = gb_parms[i]
+                            h_flag = ishydrogenN > 0
+                            Roffset = 0.05;
+                            radiusN += Roffset;
+                            gb.addParticle(radiusN, gammaN, h_flag)
+                            #print "Adding", radiusN, gammaN, h_flag
+                        print "Adding AGBNP force ..."
+                        sys.addForce(gb)
+                        print "Done"
+                else:
+                    print('Warning: AGBNP is not supported in this version')
+
         # Adjust masses.
         if hydrogenMass is not None:
             for atom1, atom2 in self.topology.bonds():

@@ -1,12 +1,12 @@
 /* -------------------------------------------------------------------------- *
- *                               OpenMM-GVol                                *
+ *                               OpenMM-AGBNP                                *
  * -------------------------------------------------------------------------- */
 
 #include <iostream>
 #include <cstdlib>
 #include <cmath>
-#include "ReferenceGVolKernels.h"
-#include "GVolForce.h"
+#include "ReferenceAGBNPKernels.h"
+#include "AGBNPForce.h"
 #include "openmm/OpenMMException.h"
 #include "openmm/internal/ContextImpl.h"
 #include "openmm/reference/RealVec.h"
@@ -14,7 +14,7 @@
 #include "gaussvol.h"
 
 
-using namespace GVolPlugin;
+using namespace AGBNPPlugin;
 using namespace OpenMM;
 using namespace std;
 
@@ -28,10 +28,12 @@ static vector<RealVec>& extractForces(ContextImpl& context) {
     return *((vector<RealVec>*) data->forces);
 }
 
-// Initializes GVol library
-void ReferenceCalcGVolForceKernel::initialize(const System& system, const GVolForce& force) {
+// Initializes AGBNP library
+void ReferenceCalcAGBNPForceKernel::initialize(const System& system, const AGBNPForce& force) {
     
     numParticles = force.getNumParticles();
+
+    cout << "In initialize ..." << numParticles <<  endl;
 
     //input lists
     positions.resize(numParticles);
@@ -55,14 +57,19 @@ void ReferenceCalcGVolForceKernel::initialize(const System& system, const GVolFo
       ishydrogen[i] = h;
     }
 
-    //create and saves GVol instance
+    cout << "Calling new GaussVol ..." << endl;
+
+    //create and saves AGBNP instance
     gvol = new GaussVol(numParticles, radii, gammas, ishydrogen);
+    //gvol = new GaussVol();
+
+    cout << "Done" << endl;
 }
 
-double ReferenceCalcGVolForceKernel::execute(ContextImpl& context, bool includeForces, bool includeEnergy) {
+double ReferenceCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeForces, bool includeEnergy) {
     vector<RealVec>& pos = extractPositions(context);
     vector<RealVec>& force = extractForces(context);
-    bool verbose = false;
+    bool verbose = true;
     int init = 0;
 
     //for (int i = 0; i < numParticles; i++){
@@ -104,7 +111,7 @@ double ReferenceCalcGVolForceKernel::execute(ContextImpl& context, bool includeF
       cout << "Surface areas:" << endl;
       double tot_surf_area = 0.0;
       for(int i = 0; i < numParticles; i++){
-	cout << i << " " << surface_areas[i] << endl;
+	cout << "SA " << i << " " << surface_areas[i] << endl;
 	tot_surf_area += surface_areas[i];
       }
       cout << "Total surface area: (Ang^2) " << 100.0*tot_surf_area << endl;
@@ -115,10 +122,10 @@ double ReferenceCalcGVolForceKernel::execute(ContextImpl& context, bool includeF
     return (double)surf_energy;
 }
 
-void ReferenceCalcGVolForceKernel::copyParametersToContext(ContextImpl& context, const GVolForce& force) {
+void ReferenceCalcAGBNPForceKernel::copyParametersToContext(ContextImpl& context, const AGBNPForce& force) {
   std::vector<int> neighbors;
     if (force.getNumParticles() != numParticles)
-        throw OpenMMException("updateParametersInContext: The number of GVol particles has changed");
+        throw OpenMMException("updateParametersInContext: The number of AGBNP particles has changed");
     for (int i = 0; i < force.getNumParticles(); i++) {
       double r, g;
       bool h;

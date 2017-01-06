@@ -1,16 +1,16 @@
 /* -------------------------------------------------------------------------- *
- *                            OpenMM-GVol                                   *
+ *                            OpenMM-AGBNP                                   *
  * -------------------------------------------------------------------------- */
 
 #include <exception>
 
-#include "OpenCLGVolKernelFactory.h"
-#include "OpenCLGVolKernels.h"
+#include "OpenCLAGBNPKernelFactory.h"
+#include "OpenCLAGBNPKernels.h"
 #include "openmm/internal/windowsExport.h"
 #include "openmm/internal/ContextImpl.h"
 #include "openmm/OpenMMException.h"
 
-using namespace GVolPlugin;
+using namespace AGBNPPlugin;
 using namespace OpenMM;
 
 extern "C" OPENMM_EXPORT void registerPlatforms() {
@@ -19,15 +19,15 @@ extern "C" OPENMM_EXPORT void registerPlatforms() {
 extern "C" OPENMM_EXPORT void registerKernelFactories() {
     try {
         Platform& platform = Platform::getPlatformByName("OpenCL");
-        OpenCLGVolKernelFactory* factory = new OpenCLGVolKernelFactory();
-        platform.registerKernelFactory(CalcGVolForceKernel::Name(), factory);
+        OpenCLAGBNPKernelFactory* factory = new OpenCLAGBNPKernelFactory();
+        platform.registerKernelFactory(CalcAGBNPForceKernel::Name(), factory);
     }
     catch (std::exception ex) {
         // Ignore
     }
 }
 
-extern "C" OPENMM_EXPORT void registerGVolOpenCLKernelFactories() {
+extern "C" OPENMM_EXPORT void registerAGBNPOpenCLKernelFactories() {
     try {
         Platform::getPlatformByName("OpenCL");
     }
@@ -37,9 +37,9 @@ extern "C" OPENMM_EXPORT void registerGVolOpenCLKernelFactories() {
     registerKernelFactories();
 }
 
-KernelImpl* OpenCLGVolKernelFactory::createKernelImpl(std::string name, const Platform& platform, ContextImpl& context) const {
+KernelImpl* OpenCLAGBNPKernelFactory::createKernelImpl(std::string name, const Platform& platform, ContextImpl& context) const {
     OpenCLContext& cl = *static_cast<OpenCLPlatform::PlatformData*>(context.getPlatformData())->contexts[0];
-    if (name == CalcGVolForceKernel::Name())
-        return new OpenCLCalcGVolForceKernel(name, platform, cl, context.getSystem());
+    if (name == CalcAGBNPForceKernel::Name())
+        return new OpenCLCalcAGBNPForceKernel(name, platform, cl, context.getSystem());
     throw OpenMMException((std::string("Tried to create kernel with illegal kernel name '")+name+"'").c_str());
 }

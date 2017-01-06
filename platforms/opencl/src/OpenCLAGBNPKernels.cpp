@@ -1,9 +1,9 @@
 /* -------------------------------------------------------------------------- *
- *                                   OpenMM-GVol                            *
+ *                                   OpenMM-AGBNP                            *
  * -------------------------------------------------------------------------- */
 
-#include "OpenCLGVolKernels.h"
-#include "OpenCLGVolKernelSources.h"
+#include "OpenCLAGBNPKernels.h"
+#include "OpenCLAGBNPKernelSources.h"
 #include "openmm/internal/ContextImpl.h"
 #include "openmm/opencl/OpenCLNonbondedUtilities.h"
 #include "openmm/opencl/OpenCLForceInfo.h"
@@ -39,13 +39,13 @@
 // minimum overlap volume to count
 #define MAX_ORDER (12)
 
-using namespace GVolPlugin;
+using namespace AGBNPPlugin;
 using namespace OpenMM;
 using namespace std;
 
-class OpenCLGVolForceInfo : public OpenCLForceInfo {
+class OpenCLAGBNPForceInfo : public OpenCLForceInfo {
 public:
-  OpenCLGVolForceInfo(int requiredBuffers, const GVolForce& force) : OpenCLForceInfo(requiredBuffers), force(force) {
+  OpenCLAGBNPForceInfo(int requiredBuffers, const AGBNPForce& force) : OpenCLForceInfo(requiredBuffers), force(force) {
     }
     int getNumParticleGroups() {
       return force.getNumParticles();//each particle is in a different group?
@@ -57,10 +57,10 @@ public:
         return (group1 == group2);
     }
 private:
-    const GVolForce& force;
+    const AGBNPForce& force;
 };
 
-OpenCLCalcGVolForceKernel::~OpenCLCalcGVolForceKernel() {
+OpenCLCalcAGBNPForceKernel::~OpenCLCalcAGBNPForceKernel() {
   //    if (params != NULL)
   //   delete params;
 }
@@ -69,7 +69,7 @@ OpenCLCalcGVolForceKernel::~OpenCLCalcGVolForceKernel() {
 
 static int _nov_ = 0;
 
-void OpenCLCalcGVolForceKernel::init_tree_size(int pad_modulo,
+void OpenCLCalcAGBNPForceKernel::init_tree_size(int pad_modulo,
 					       vector<int>& noverlaps, vector<int>& noverlaps_2body)  {
   OpenCLNonbondedUtilities& nb = cl.getNonbondedUtilities();
   total_tree_size = 0;
@@ -248,7 +248,7 @@ void OpenCLCalcGVolForceKernel::init_tree_size(int pad_modulo,
 }
 
 
-int OpenCLCalcGVolForceKernel::copy_tree_to_device(void){
+int OpenCLCalcAGBNPForceKernel::copy_tree_to_device(void){
 
   int padsize = cl.getPaddedNumAtoms();
   vector<cl_int> nn(padsize);
@@ -287,11 +287,11 @@ int OpenCLCalcGVolForceKernel::copy_tree_to_device(void){
   return 1;
 }
 
-void OpenCLCalcGVolForceKernel::initialize(const System& system, const GVolForce& force) {
+void OpenCLCalcAGBNPForceKernel::initialize(const System& system, const AGBNPForce& force) {
     verbose_level = 1;
 
     if (cl.getPlatformData().contexts.size() > 1)
-      throw OpenMMException("GVolForce does not support using multiple OpenCL devices");
+      throw OpenMMException("AGBNPForce does not support using multiple OpenCL devices");
     
     OpenCLNonbondedUtilities& nb = cl.getNonbondedUtilities();
     int elementSize = (cl.getUseDoublePrecision() ? sizeof(cl_double) : sizeof(cl_float));   
@@ -336,8 +336,8 @@ void OpenCLCalcGVolForceKernel::initialize(const System& system, const GVolForce
     gammaParam1->upload(gammaVector1);
     gammaParam2->upload(gammaVector2);
     ishydrogenParam->upload(ishydrogenVector);
-    useCutoff = (force.getNonbondedMethod() != GVolForce::NoCutoff);
-    usePeriodic = (force.getNonbondedMethod() != GVolForce::NoCutoff && force.getNonbondedMethod() != GVolForce::CutoffNonPeriodic);
+    useCutoff = (force.getNonbondedMethod() != AGBNPForce::NoCutoff);
+    usePeriodic = (force.getNonbondedMethod() != AGBNPForce::NoCutoff && force.getNonbondedMethod() != AGBNPForce::CutoffNonPeriodic);
     useExclusions = false;
     cutoffDistance = force.getCutoffDistance();
     if(verbose_level > 1){
@@ -350,7 +350,7 @@ void OpenCLCalcGVolForceKernel::initialize(const System& system, const GVolForce
     hasCreatedKernels = false;
 }
 
-double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForces, bool includeEnergy) {
+double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeForces, bool includeEnergy) {
   OpenCLNonbondedUtilities& nb = cl.getNonbondedUtilities();
   bool useLong = cl.getSupports64BitGlobalAtomics();
   bool verbose = verbose_level > 0;
@@ -530,7 +530,7 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
       atomj_buffer_temp = OpenCLArray::create<cl_int>(cl, temp_buffer_size, "atomj_buffer_temp");
 
       //now copy overlap tree arrays to device
-      OpenCLCalcGVolForceKernel::copy_tree_to_device();
+      OpenCLCalcAGBNPForceKernel::copy_tree_to_device();
     }
 
     {
@@ -550,7 +550,7 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
 
       kernel_name = "resetTree";
       if(verbose) cout << "compiling " << kernel_name << " ... ";
-      file = cl.replaceStrings(OpenCLGVolKernelSources::GVolResetTree, replacements);
+      file = cl.replaceStrings(OpenCLAGBNPKernelSources::GVolResetTree, replacements);
       program = cl.createProgram(file, defines);
       //reset tree kernel
       resetTreeKernel = cl::Kernel(program, kernel_name.c_str());
@@ -887,7 +887,7 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
 
 
 
-      string InitOverlapTreeSrc = cl.replaceStrings(OpenCLGVolKernelSources::GVolOverlapTree, replacements);
+      string InitOverlapTreeSrc = cl.replaceStrings(OpenCLAGBNPKernelSources::GVolOverlapTree, replacements);
 
       kernel_name = "InitOverlapTree_1body";
       replacements["KERNEL_NAME"] = kernel_name;
@@ -1327,7 +1327,7 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
       map<string, string> replacements;
       string kernel_name = "computeSelfVolumes";
       if(verbose) cout << "compiling " << kernel_name << " ... ";
-      string file = cl.replaceStrings(OpenCLGVolKernelSources::GVolSelfVolume, replacements);
+      string file = cl.replaceStrings(OpenCLAGBNPKernelSources::GVolSelfVolume, replacements);
       //ofstream output("tmp_kernel.cl");
       //output << file << std::endl;
       //output.close();
@@ -1387,7 +1387,7 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
       if(verbose) cout << "compiling " << kernel_name << " ... ";
       //cout << "compiling " << kernel_name << endl;
 
-      string file = OpenCLGVolKernelSources::GVolReduceTree;
+      string file = OpenCLAGBNPKernelSources::GVolReduceTree;
       cl::Program program = cl.createProgram(file, defines);
       if(verbose) cout << " done. " << endl;
       reduceSelfVolumesKernel_buffer = cl::Kernel(program, kernel_name.c_str());
@@ -1627,7 +1627,7 @@ double OpenCLCalcGVolForceKernel::execute(ContextImpl& context, bool includeForc
   return 0.0;
 }
 
-void OpenCLCalcGVolForceKernel::copyParametersToContext(ContextImpl& context, const GVolForce& force) {
+void OpenCLCalcAGBNPForceKernel::copyParametersToContext(ContextImpl& context, const AGBNPForce& force) {
     int numContexts = cl.getPlatformData().contexts.size();
     int startIndex = cl.getContextIndex()*force.getNumParticles()/numContexts;
     int endIndex = (cl.getContextIndex()+1)*force.getNumParticles()/numContexts;

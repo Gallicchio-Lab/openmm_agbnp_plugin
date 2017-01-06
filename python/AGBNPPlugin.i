@@ -1,4 +1,4 @@
-%module GVolplugin
+%module AGBNPplugin
 
 %import(module="simtk.openmm") "swig/OpenMMSwigHeaders.i"
 %include "swig/typemaps.i"
@@ -17,7 +17,7 @@ namespace std {
 };
 
 %{
-#include "GVolForce.h"
+#include "AGBNPForce.h"
 #include "OpenMM.h" 
 #include "OpenMMAmoeba.h"
 #include "OpenMMDrude.h"
@@ -37,19 +37,19 @@ import simtk.unit as unit
 /*
  * Add units to function outputs.
 */
-%pythonappend GVolPlugin::GVolForce::getParticleParameters(int index, double& radius, double& gamma, 
+%pythonappend AGBNPPlugin::AGBNPForce::getParticleParameters(int index, double& radius, double& gamma, 
 							   bool& ishydrogen) const %{
     val[2] = unit.Quantity(val[2], unit.nanometer)
     val[3] = unit.Quantity(val[3], unit.kilojoule_per_mole / (unit.nanometer * unit.nanometer))
 %}
 
 
-namespace GVolPlugin {
+namespace AGBNPPlugin {
 
-class GVolForce : public OpenMM::Force {
+class AGBNPForce : public OpenMM::Force {
 public:
 
-    GVolForce();
+    AGBNPForce();
 
     int getNumParticles() const;
 

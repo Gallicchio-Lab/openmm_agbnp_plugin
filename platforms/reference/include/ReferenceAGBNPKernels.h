@@ -1,26 +1,26 @@
-#ifndef REFERENCE_GVol_KERNELS_H_
-#define REFERENCE_GVol_KERNELS_H_
+#ifndef REFERENCE_AGBNP_KERNELS_H_
+#define REFERENCE_AGBNP_KERNELS_H_
 
 /* -------------------------------------------------------------------------- *
- *                           OpenMM-GVol                                    *
+ *                           OpenMM-AGBNP                                    *
  * -------------------------------------------------------------------------- */
-#include "GVolKernels.h"
+#include "AGBNPKernels.h"
 #include "openmm/Platform.h"
 #include <vector>
 #include "gaussvol.h"
 
-namespace GVolPlugin {
+namespace AGBNPPlugin {
 
 /**
- * This kernel is invoked by GVolForce to calculate the forces acting 
+ * This kernel is invoked by AGBNPForce to calculate the forces acting 
  * on the system and the energy of the system.
  */
-class ReferenceCalcGVolForceKernel : public CalcGVolForceKernel {
+class ReferenceCalcAGBNPForceKernel : public CalcAGBNPForceKernel {
 public:
-    ReferenceCalcGVolForceKernel(std::string name, const OpenMM::Platform& platform) : CalcGVolForceKernel(name, platform) {
+    ReferenceCalcAGBNPForceKernel(std::string name, const OpenMM::Platform& platform) : CalcAGBNPForceKernel(name, platform) {
     gvol = 0;
     }
-  ~ReferenceCalcGVolForceKernel(){
+  ~ReferenceCalcAGBNPForceKernel(){
     if(gvol) delete gvol;
     positions.clear();
     ishydrogen.clear();
@@ -37,9 +37,9 @@ public:
      * Initialize the kernel.
      * 
      * @param system     the System this kernel will be applied to
-     * @param force      the GVolForce this kernel will be used for
+     * @param force      the AGBNPForce this kernel will be used for
      */
-    void initialize(const OpenMM::System& system, const GVolForce& force);
+    void initialize(const OpenMM::System& system, const AGBNPForce& force);
     /**
      * Execute the kernel to calculate the forces and/or energy.
      *
@@ -51,9 +51,9 @@ public:
      * Copy changed parameters over to a context.
      *
      * @param context    the context to copy parameters to
-     * @param force      the GVolForce to copy the parameters from
+     * @param force      the AGBNPForce to copy the parameters from
      */
-    void copyParametersToContext(OpenMM::ContextImpl& context, const GVolForce& force);
+    void copyParametersToContext(OpenMM::ContextImpl& context, const AGBNPForce& force);
  
 private:
     GaussVol *gvol; // gaussvol instance
@@ -69,6 +69,6 @@ private:
     std::vector<RealVec> surf_force;
 };
 
-} // namespace GVolPlugin
+} // namespace AGBNPPlugin
 
-#endif /*REFERENCE_GVol_KERNELS_H_*/
+#endif /*REFERENCE_AGBNP_KERNELS_H_*/

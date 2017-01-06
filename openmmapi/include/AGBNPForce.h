@@ -1,20 +1,20 @@
-#ifndef OPENMM_GVolFORCE_H_
-#define OPENMM_GVolFORCE_H_
+#ifndef OPENMM_AGBNPFORCE_H_
+#define OPENMM_AGBNPFORCE_H_
 
 /* -------------------------------------------------------------------------- *
- *                         OpenMM-GVol                                      *
+ *                         OpenMM-AGBNP                                      *
  * -------------------------------------------------------------------------- */
 
 #include "openmm/Context.h"
 #include "openmm/Force.h"
 #include <vector>
-#include "internal/windowsExportGVol.h"
+#include "internal/windowsExportAGBNP.h"
 
-namespace GVolPlugin {
+namespace AGBNPPlugin {
 
-/* This class implements the GVol implicit solvation model */
+/* This class implements the AGBNP implicit solvation model */
 
-class OPENMM_EXPORT_GVol GVolForce : public OpenMM::Force {
+class OPENMM_EXPORT_AGBNP AGBNPForce : public OpenMM::Force {
 public:
     /**
      * This is an enumeration of the different methods that may be used for handling long range nonbonded forces.
@@ -36,11 +36,11 @@ public:
         CutoffPeriodic = 2,
     };
     /**
-     * Create an GVolForce.
+     * Create an AGBNPForce.
      */
-    GVolForce();
+    AGBNPForce();
     /**
-     * Add a particle to GVol
+     * Add a particle to AGBNP
      *
      * This should be called once for each particle in the System. When it is called for the i'th time, 
      * it specifies the parameters for the i'th particle.
@@ -53,7 +53,7 @@ public:
     int addParticle(double radius, double gamma, bool ishydrogen);
 
     /**
-     * Get the GVol parameters for a particle
+     * Get the AGBNP parameters for a particle
      * 
      * @param index       the index of the particle
      * @param radius      the van der Waals radius of the particle, measured in nm
@@ -63,7 +63,7 @@ public:
     void getParticleParameters(int index, double& radius, double& gamma,  
 			       bool& ishydrogen) const;
     /**
-     * Get the number of particles defined for GVol
+     * Get the number of particles defined for AGBNP
      */
     int getNumParticles() const {
         return particles.size();
@@ -106,7 +106,7 @@ private:
  * This is an internal class used to record information about particles.
  * @private
  */
-class GVolForce::ParticleInfo {
+class AGBNPForce::ParticleInfo {
  public:
   bool ishydrogen;
   double radius, gamma;
@@ -119,6 +119,6 @@ class GVolForce::ParticleInfo {
   radius(radius), gamma(gamma), ishydrogen(ishydrogen) {  }
  };
  
-} // namespace GVolPlugin
+} // namespace AGBNPPlugin
 
-#endif /*OPENMM_GVolFORCE_H_*/
+#endif /*OPENMM_AGBNPFORCE_H_*/

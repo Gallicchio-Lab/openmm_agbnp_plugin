@@ -1,16 +1,16 @@
-#ifndef OPENCL_GVol_KERNELS_H_
-#define OPENCL_GVol_KERNELS_H_
+#ifndef OPENCL_AGBNP_KERNELS_H_
+#define OPENCL_AGBNP_KERNELS_H_
 
 /* -------------------------------------------------------------------------- *
- *                           OpenMM-GVol                                    *
+ *                           OpenMM-AGBNP                                    *
  * -------------------------------------------------------------------------- */
 
-#include "GVolKernels.h"
+#include "AGBNPKernels.h"
 #include "openmm/opencl/OpenCLContext.h"
 #include "openmm/opencl/OpenCLArray.h"
 using namespace std;
 
-namespace GVolPlugin {
+namespace AGBNPPlugin {
 
 
 class GOverlap_Tree {
@@ -37,22 +37,22 @@ class GOverlap_Tree {
 };
 
 /**
- * This kernel is invoked by GVolForce to calculate the forces acting on the system and the energy of the system.
+ * This kernel is invoked by AGBNPForce to calculate the forces acting on the system and the energy of the system.
  */
-class OpenCLCalcGVolForceKernel : public CalcGVolForceKernel {
+class OpenCLCalcAGBNPForceKernel : public CalcAGBNPForceKernel {
 public:
-    OpenCLCalcGVolForceKernel(std::string name, const OpenMM::Platform& platform, OpenMM::OpenCLContext& cl, const OpenMM::System& system) :
-  CalcGVolForceKernel(name, platform), hasInitializedKernel(false), hasCreatedKernels(false), cl(cl), system(system) {
+    OpenCLCalcAGBNPForceKernel(std::string name, const OpenMM::Platform& platform, OpenMM::OpenCLContext& cl, const OpenMM::System& system) :
+  CalcAGBNPForceKernel(name, platform), hasInitializedKernel(false), hasCreatedKernels(false), cl(cl), system(system) {
     }
 
-    ~OpenCLCalcGVolForceKernel();
+    ~OpenCLCalcAGBNPForceKernel();
     /**
      * Initialize the kernel.
      * 
      * @param system     the System this kernel will be applied to
-     * @param force      the GVolForce this kernel will be used for
+     * @param force      the AGBNPForce this kernel will be used for
      */
-    void initialize(const OpenMM::System& system, const GVolForce& force);
+    void initialize(const OpenMM::System& system, const AGBNPForce& force);
     /**
      * Execute the kernel to calculate the forces and/or energy.
      *
@@ -66,9 +66,9 @@ public:
      * Copy changed parameters over to a context.
      *
      * @param context    the context to copy parameters to
-     * @param force      the GVolForce to copy the parameters from
+     * @param force      the AGBNPForce to copy the parameters from
      */
-    void copyParametersToContext(OpenMM::ContextImpl& context, const GVolForce& force);
+    void copyParametersToContext(OpenMM::ContextImpl& context, const AGBNPForce& force);
 
     /**
      * Copy overlap tree to device
@@ -81,7 +81,7 @@ public:
 			vector<int>& noverlaps, vector<int>& noverlaps_2body);
 
 private:
-    const GVolForce *gvol_force;
+    const AGBNPForce *gvol_force;
 
     int numParticles;
     bool useCutoff;
@@ -189,6 +189,6 @@ private:
     int verbose_level;
 };
 
-} // namespace GVolPlugin
+} // namespace AGBNPPlugin
 
-#endif /*OPENCL_GVol_KERNELS_H_*/
+#endif /*OPENCL_AGBNP_KERNELS_H_*/

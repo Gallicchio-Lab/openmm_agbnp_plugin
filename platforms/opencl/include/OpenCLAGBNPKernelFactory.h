@@ -1,23 +1,23 @@
-#ifndef OPENMM_OPENCLGVolKERNELFACTORY_H_
-#define OPENMM_OPENCLGVolKERNELFACTORY_H_
+#ifndef OPENMM_OPENCLAGBNPKERNELFACTORY_H_
+#define OPENMM_OPENCLAGBNPKERNELFACTORY_H_
 
 /* -------------------------------------------------------------------------- *
- *                              OpenMM-GVol                                 *
+ *                              OpenMM-AGBNP                                 *
  * -------------------------------------------------------------------------- */
 
 #include "openmm/KernelFactory.h"
 
-namespace GVolPlugin {
+namespace AGBNPPlugin {
 
 /**
- * This KernelFactory creates kernels for the OpenCL implementation of the GVol plugin.
+ * This KernelFactory creates kernels for the OpenCL implementation of the AGBNP plugin.
  */
 
-class OpenCLGVolKernelFactory : public OpenMM::KernelFactory {
+class OpenCLAGBNPKernelFactory : public OpenMM::KernelFactory {
 public:
     OpenMM::KernelImpl* createKernelImpl(std::string name, const OpenMM::Platform& platform, OpenMM::ContextImpl& context) const;
 };
 
-} // namespace GVolPlugin
+} // namespace AGBNPPlugin
 
-#endif /*OPENMM_OPENCLGVolKERNELFACTORY_H_*/
+#endif /*OPENMM_OPENCLAGBNPKERNELFACTORY_H_*/

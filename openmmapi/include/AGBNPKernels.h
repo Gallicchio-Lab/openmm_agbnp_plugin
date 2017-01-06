@@ -1,35 +1,35 @@
-#ifndef GVol_KERNELS_H_
-#define GVol_KERNELS_H_
+#ifndef AGBNP_KERNELS_H_
+#define AGBNP_KERNELS_H_
 
 /* -------------------------------------------------------------------------- *
- *                              OpenMM-GVol                                 *
+ *                              OpenMM-AGBNP                                 *
  * -------------------------------------------------------------------------- */
 
-#include "GVolForce.h"
+#include "AGBNPForce.h"
 #include "openmm/KernelImpl.h"
 #include "openmm/Platform.h"
 #include "openmm/System.h"
 #include <string>
 
-namespace GVolPlugin {
+namespace AGBNPPlugin {
 
 /**
- * This kernel is invoked by GVolForce to calculate the forces acting on the system and the energy of the system.
+ * This kernel is invoked by AGBNPForce to calculate the forces acting on the system and the energy of the system.
  */
-class CalcGVolForceKernel : public OpenMM::KernelImpl {
+class CalcAGBNPForceKernel : public OpenMM::KernelImpl {
 public:
     static std::string Name() {
-        return "CalcGVolForce";
+        return "CalcAGBNPForce";
     }
-    CalcGVolForceKernel(std::string name, const OpenMM::Platform& platform) : OpenMM::KernelImpl(name, platform) {
+    CalcAGBNPForceKernel(std::string name, const OpenMM::Platform& platform) : OpenMM::KernelImpl(name, platform) {
     }
     /**
      * Initialize the kernel.
      * 
      * @param system     the System this kernel will be applied to
-     * @param force      the GVolForce this kernel will be used for
+     * @param force      the AGBNPForce this kernel will be used for
      */
-    virtual void initialize(const OpenMM::System& system, const GVolForce& force) = 0;
+    virtual void initialize(const OpenMM::System& system, const AGBNPForce& force) = 0;
     /**
      * Execute the kernel to calculate the forces and/or energy.
      *
@@ -41,11 +41,11 @@ public:
      * Copy changed parameters over to a context.
      *
      * @param context    the context to copy parameters to
-     * @param force      the GVolForce to copy the parameters from
+     * @param force      the AGBNPForce to copy the parameters from
      */
-    virtual void copyParametersToContext(OpenMM::ContextImpl& context, const GVolForce& force) = 0;
+    virtual void copyParametersToContext(OpenMM::ContextImpl& context, const AGBNPForce& force) = 0;
 };
 
-} // namespace GVolPlugin
+} // namespace AGBNPPlugin
 
-#endif /*GVol_KERNELS_H_*/
+#endif /*AGBNP_KERNELS_H_*/

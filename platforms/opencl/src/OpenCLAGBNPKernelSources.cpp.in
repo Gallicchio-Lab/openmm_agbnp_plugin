@@ -1,9 +1,9 @@
 /* -------------------------------------------------------------------------- *
- *                                   OpenMM-GVol                            *
+ *                                   OpenMM-AGBNP                            *
  * -------------------------------------------------------------------------- */
 
-#include "OpenCLGVolKernelSources.h"
+#include "OpenCLAGBNPKernelSources.h"
 
-using namespace GVolPlugin;
+using namespace AGBNPPlugin;
 using namespace std;
 

@@ -1,31 +1,31 @@
-#ifndef OPENMM_GVolFORCEIMPL_H_
-#define OPENMM_GVolFORCEIMPL_H_
+#ifndef OPENMM_AGBNPFORCEIMPL_H_
+#define OPENMM_AGBNPFORCEIMPL_H_
 
 /* -------------------------------------------------------------------------- *
- *                                   OpenMM-GVol                            *
+ *                                   OpenMM-AGBNP                            *
  * -------------------------------------------------------------------------- */
 
-#include "GVolForce.h"
+#include "AGBNPForce.h"
 #include "openmm/internal/ForceImpl.h"
 #include "openmm/Kernel.h"
 #include <utility>
 #include <set>
 #include <string>
 
-namespace GVolPlugin {
+namespace AGBNPPlugin {
 
 class System;
 
 /**
- * This is the internal implementation of GVolForce.
+ * This is the internal implementation of AGBNPForce.
  */
 
-class OPENMM_EXPORT_GVol GVolForceImpl : public OpenMM::ForceImpl {
+class OPENMM_EXPORT_AGBNP AGBNPForceImpl : public OpenMM::ForceImpl {
 public:
-    GVolForceImpl(const GVolForce& owner);
-    ~GVolForceImpl();
+    AGBNPForceImpl(const AGBNPForce& owner);
+    ~AGBNPForceImpl();
     void initialize(OpenMM::ContextImpl& context);
-    const GVolForce& getOwner() const {
+    const AGBNPForce& getOwner() const {
         return owner;
     }
     void updateContextState(OpenMM::ContextImpl& context) {
@@ -38,10 +38,10 @@ public:
     std::vector<std::string> getKernelNames();
     void updateParametersInContext(OpenMM::ContextImpl& context);
 private:
-    const GVolForce& owner;
+    const AGBNPForce& owner;
     OpenMM::Kernel kernel;
 };
 
-} // namespace GVolPlugin
+} // namespace AGBNPPlugin
 
-#endif /*OPENMM_GVolFORCEIMPL_H_*/
+#endif /*OPENMM_AGBNPFORCEIMPL_H_*/

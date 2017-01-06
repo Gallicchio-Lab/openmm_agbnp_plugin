@@ -8,7 +8,7 @@ from datetime import datetime
 
 shutil.copyfile('trpcage_2.dms','trpcage_3.dms')
 testDes = DesmondDMSFile('trpcage_3.dms')
-system = testDes.createSystem(nonbondedMethod=CutoffNonPeriodic,nonbondedCutoff=1*nanometer, OPLS = True, implicitSolvent='GVolSA')
+system = testDes.createSystem(nonbondedMethod=CutoffNonPeriodic,nonbondedCutoff=1*nanometer, OPLS = True, implicitSolvent='AGBNP')
 
 #Choose Reference or OpenCL platform
 

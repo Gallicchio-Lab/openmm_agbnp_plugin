@@ -1,13 +1,13 @@
-#ifndef OPENMM_OPENCLGVolKERNELSOURCES_H_
-#define OPENMM_OPENCLGVolKERNELSOURCES_H_
+#ifndef OPENMM_OPENCLAGBNPKERNELSOURCES_H_
+#define OPENMM_OPENCLAGBNPKERNELSOURCES_H_
 
 /* -------------------------------------------------------------------------- *
- *                                   OpenMM-GVol                            *
+ *                                   OpenMM-AGBNP                            *
  * -------------------------------------------------------------------------- */
 
 #include <string>
 
-namespace GVolPlugin {
+namespace AGBNPPlugin {
 
 /**
  * This class is a central holding place for the source code of OpenCL kernels.
@@ -15,11 +15,11 @@ namespace GVolPlugin {
  * kernels subfolder.
  */
 
-class OpenCLGVolKernelSources {
+class OpenCLAGBNPKernelSources {
 public:
 @CL_FILE_DECLARATIONS@
 };
 
-} // namespace GVolPlugin
+} // namespace AGBNPPlugin
 
-#endif /*OPENMM_OPENCLGVolKERNELSOURCES_H_*/
+#endif /*OPENMM_OPENCLAGBNPKERNELSOURCES_H_*/

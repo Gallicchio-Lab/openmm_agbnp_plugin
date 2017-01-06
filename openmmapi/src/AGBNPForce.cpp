@@ -1,44 +1,44 @@
 /* -------------------------------------------------------------------------- *
- *                             OpenMM-GVol                                  *
+ *                             OpenMM-AGBNP                                  *
  * -------------------------------------------------------------------------- */
 
 #include <iostream>
-#include "GVolForce.h"
-#include "internal/GVolForceImpl.h"
+#include "AGBNPForce.h"
+#include "internal/AGBNPForceImpl.h"
 #include "openmm/OpenMMException.h"
 #include "openmm/internal/AssertionUtilities.h"
 
-using namespace GVolPlugin;
+using namespace AGBNPPlugin;
 using namespace OpenMM;
 using namespace std;
 
-GVolForce::GVolForce() : nonbondedMethod(NoCutoff), cutoffDistance(1.0) {
+AGBNPForce::AGBNPForce() : nonbondedMethod(NoCutoff), cutoffDistance(1.0) {
 }
 
-int GVolForce::addParticle(double radius, double charge, bool ishydrogen){
+int AGBNPForce::addParticle(double radius, double charge, bool ishydrogen){
   ParticleInfo particle(radius, charge, ishydrogen);
   particles.push_back(particle);
   return particles.size()-1;
 }
 
 
-GVolForce::NonbondedMethod GVolForce::getNonbondedMethod() const {
+AGBNPForce::NonbondedMethod AGBNPForce::getNonbondedMethod() const {
     return nonbondedMethod;
 }
 
-void GVolForce::setNonbondedMethod(NonbondedMethod method) {
+void AGBNPForce::setNonbondedMethod(NonbondedMethod method) {
     nonbondedMethod = method;
 }
 
-double GVolForce::getCutoffDistance() const {
+double AGBNPForce::getCutoffDistance() const {
     return cutoffDistance;
 }
 
-void GVolForce::setCutoffDistance(double distance) {
+void AGBNPForce::setCutoffDistance(double distance) {
     cutoffDistance = distance;
 }
 
-void GVolForce::getParticleParameters(int index,  double& radius, double& gamma, 
+void AGBNPForce::getParticleParameters(int index,  double& radius, double& gamma, 
 				      bool& ishydrogen) const { 
 
     ASSERT_VALID_INDEX(index, particles);
@@ -47,10 +47,10 @@ void GVolForce::getParticleParameters(int index,  double& radius, double& gamma,
     ishydrogen = particles[index].ishydrogen;
 }
 
-ForceImpl* GVolForce::createImpl() const {
-    return new GVolForceImpl(*this);
+ForceImpl* AGBNPForce::createImpl() const {
+    return new AGBNPForceImpl(*this);
 }
 
-void GVolForce::updateParametersInContext(Context& context) {
-    dynamic_cast<GVolForceImpl&>(getImplInContext(context)).updateParametersInContext(getContextImpl(context));
+void AGBNPForce::updateParametersInContext(Context& context) {
+    dynamic_cast<AGBNPForceImpl&>(getImplInContext(context)).updateParametersInContext(getContextImpl(context));
 }

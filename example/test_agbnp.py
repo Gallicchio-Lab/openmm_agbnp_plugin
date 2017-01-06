@@ -11,7 +11,7 @@ print("Started at: " + str(time.asctime()))
 start=datetime.now()
 shutil.copyfile('trpcage.dms','trpcage2.dms')
 testDes = DesmondDMSFile('trpcage2.dms')
-system = testDes.createSystem(nonbondedMethod=NoCutoff, OPLS = True, implicitSolvent='GVolSA')
+system = testDes.createSystem(nonbondedMethod=NoCutoff, OPLS = True, implicitSolvent='AGBNP')
 
 #Choose Reference or OpenCL platform
 
