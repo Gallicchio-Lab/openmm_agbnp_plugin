@@ -38,7 +38,7 @@ SET(AGBNP_PLUGIN_SOURCE_SUBDIRS openmmapi)
 SET(AGBNP_LIBRARY_NAME AGBNPPlugin)
 SET(SHARED_AGBNP_TARGET ${AGBNP_LIBRARY_NAME})
 #These are all the places to search for header files which are to be part of the API.
-SET(API_INCLUDE_DIRS "openmmapi/include" "openmmapi/include/internal")
+SET(API_INCLUDE_DIRS "gaussvol" "openmmapi/include" "openmmapi/include/internal")
 # Locate header files.
 SET(API_INCLUDE_FILES)
 FOREACH(dir ${API_INCLUDE_DIRS})
@@ -57,6 +57,8 @@ FOREACH(subdir ${AGBNP_PLUGIN_SOURCE_SUBDIRS})
     ## OpenMM was previously installed there.
     INCLUDE_DIRECTORIES(BEFORE ${CMAKE_CURRENT_SOURCE_DIR}/${subdir}/include)
 ENDFOREACH(subdir)
+INCLUDE_DIRECTORIES(BEFORE ${GAUSSVOL_DIR})
+
 # Create the library.
 ADD_LIBRARY(${SHARED_AGBNP_TARGET} SHARED ${SOURCE_FILES} ${SOURCE_INCLUDE_FILES} ${API_INCLUDE_FILES})
 SET_TARGET_PROPERTIES(${SHARED_AGBNP_TARGET}

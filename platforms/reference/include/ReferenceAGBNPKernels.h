@@ -5,6 +5,7 @@
  *                           OpenMM-AGBNP                                    *
  * -------------------------------------------------------------------------- */
 #include "AGBNPKernels.h"
+#include "AGBNPUtils.h"
 #include "openmm/Platform.h"
 #include <vector>
 #include "gaussvol.h"
@@ -30,6 +31,10 @@ public:
     self_volume.clear();
     surface_areas.clear();
     surf_force.clear();
+    volume_scaling_factor.clear();
+    inverse_born_radius.clear();
+    inverse_born_radius_fp.clear();
+    born_radius.clear();
   }
 
 
@@ -63,10 +68,16 @@ private:
     std::vector<bool> ishydrogen;
     std::vector<RealOpenMM> radii;
     std::vector<RealOpenMM> gammas;
+    std::vector<RealOpenMM> vdw_alpha;
     //outputs
     RealOpenMM surf_energy;
     std::vector<RealOpenMM> free_volume, self_volume, surface_areas;
     std::vector<RealVec> surf_force;
+    AGBNPI42DLookupTable *i4_lut;
+    std::vector<RealOpenMM> volume_scaling_factor;
+    std::vector<RealOpenMM> inverse_born_radius;
+    std::vector<RealOpenMM> inverse_born_radius_fp;
+    std::vector<RealOpenMM> born_radius;
 };
 
 } // namespace AGBNPPlugin

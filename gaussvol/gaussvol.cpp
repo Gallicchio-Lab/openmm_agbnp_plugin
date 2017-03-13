@@ -9,34 +9,9 @@
 
 using namespace std;
 
-#define PI (3.14159265359)
-/* conversion factors from spheres to Gaussians */
-#define KFC (2.2269859253)
-#define PFC (2.5);
-
-// have switching function
-#define MIN_GVOL (FLT_MIN)
-
-//suitable for w/o switching function
-//#define MIN_GVOL (1.e-2)
-
-// maximum overlap level
-#define MAX_ORDER (12)
-
 //counts overlaps
 static int _nov_ = 0; 
 
-//use nm and kj
-#define ANG (0.1f)
-#define ANG3 (0.001f)
-
-//volume cutoffs in switching function
-#define VOLMINA (0.01f*ANG3)
-#define VOLMINB (0.1f*ANG3)
-
-//radius offset for surf energy calc.
-//#define SA_DR (0.1f*ANG)
-#define SA_DR (0.5f*ANG)
 
 /* overlap volume switching function + 1st derivative */
 static RealOpenMM pol_switchfunc(RealOpenMM gvol, RealOpenMM volmina, RealOpenMM volminb, RealOpenMM &sp){

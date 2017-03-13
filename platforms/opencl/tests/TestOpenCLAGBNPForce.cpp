@@ -37,6 +37,13 @@ void testForce() {
     int ih;
     double ang2nm = 0.1;
     double kcalmol2kjmol = 4.184;
+
+    double sigmaw = 3.15365*ang2nm; /* LJ sigma of TIP4P water oxygen */
+    double epsilonw = 0.155*kcalmol2kjmol;        /* LJ epsilon of TIP4P water oxygen */
+    double rho = 0.033428*pow(ang2nm,3);   /* water number density */
+    double epsilon_LJ = 0.155*kcalmol2kjmol;
+    double sigma_LJ;
+
     for(int i=0;i<numParticles;i++){
       std::cin >> id >> x >> y >> z >> radius >> charge >> gamma >> ih;
       system.addParticle(1.0);
@@ -44,7 +51,11 @@ void testForce() {
       ishydrogen = (ih > 0);
       radius *= ang2nm;
       gamma *= kcalmol2kjmol/(ang2nm*ang2nm);
-      force->addParticle(radius, gamma, ishydrogen);      
+      sigma_LJ = 2.*(radius-0.5*ang2nm);
+      double sij = sqrt(sigmaw*sigma_LJ);
+      double eij = sqrt(epsilonw*epsilon_LJ);
+      double alpha = - 16.0 * M_PI * rho * eij * pow(sij,6) / 3.0;  
+      force->addParticle(radius, gamma, alpha, ishydrogen);      
     }
     // Compute the forces and energy.
     VerletIntegrator integ(1.0);

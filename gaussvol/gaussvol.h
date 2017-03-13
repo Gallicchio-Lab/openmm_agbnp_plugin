@@ -27,6 +27,8 @@
 #ifndef GAUSSVOL_H
 #define GAUSSVOL_H
 
+#include <cmath>
+#include <cfloat>
 #include <vector>
 using std::vector;
 #include "openmm/OpenMMException.h"
@@ -39,6 +41,29 @@ using namespace OpenMM;
 
 #define GAUSSVOL_OK (2)
 #define GAUSSVOL_ERR (-1)
+
+/* conversion factors from spheres to Gaussians */
+#define KFC (2.2269859253)
+#define PFC (2.5);
+
+#define PI (M_PI)
+
+// have switching function
+#define MIN_GVOL (FLT_MIN)
+
+// maximum overlap level
+#define MAX_ORDER (12)
+
+//use nm and kj
+#define ANG (0.1f)
+#define ANG3 (0.001f)
+
+//volume cutoffs in switching function
+#define VOLMINA (0.01f*ANG3)
+#define VOLMINB (0.1f*ANG3)
+
+//radius offset for surf energy calc.
+#define SA_DR (0.5f*ANG)
 
 /* 3D Gaussian, V,c,a representation */
 class GaussianVca {

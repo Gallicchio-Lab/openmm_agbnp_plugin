@@ -19,22 +19,21 @@
 #include "gaussvol.h"
 
 //conversion factors
-#define ANG (0.1f)
-#define ANG3 (0.001f)
-
-//radius offset
-#define SA_DR (0.1*ANG)
+//#define ANG (0.1f)
+//#define ANG3 (0.001f)
 
 //volume cutoffs in switching function
-#define MIN_GVOL (FLT_MIN)
+//#define MIN_GVOL (FLT_MIN)
 #define VOLMIN0 (0.009f*ANG3)
-#define VOLMINA (0.01f*ANG3)
-#define VOLMINB (0.1f*ANG3)
+//#define VOLMINA (0.01f*ANG3)
+//#define VOLMINB (0.1f*ANG3)
 
+#ifndef PI
 #define PI (3.14159265359)
+#endif
 
 // conversion factors from spheres to Gaussians
-#define KFC (2.2269859253)
+//#define KFC (2.2269859253)
 
 // minimum overlap volume to count
 #define MAX_ORDER (12)
@@ -321,9 +320,9 @@ void OpenCLCalcAGBNPForceKernel::initialize(const System& system, const AGBNPFor
     atom_ishydrogen.resize(cl.getPaddedNumAtoms());
 
     for (int i = 0; i < numParticles; i++) {
-      double radius, gamma;
+      double radius, gamma, alpha;
       bool ishydrogen;
-      force.getParticleParameters(i, radius, gamma, ishydrogen);
+      force.getParticleParameters(i, radius, gamma, alpha, ishydrogen);
 	radiusVector1[i] = (cl_float) radius;
 	radiusVector2[i] = (cl_float) (radius - SA_DR);
 	gammaVector1[i] = (cl_float) gamma/SA_DR;
@@ -382,9 +381,9 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
       surface_areas.resize(numParticles);
       surf_force.resize(numParticles);
       for (int i = 0; i < numParticles; i++){
-	double r, g;
+	double r, g, alpha;
 	bool h;
-	gvol_force->getParticleParameters(i, r, g, h);
+	gvol_force->getParticleParameters(i, r, g, alpha, h);
 	radii[i] = r;
 	gammas[i] = g;
 	ishydrogen[i] = h;

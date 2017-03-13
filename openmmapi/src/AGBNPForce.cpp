@@ -15,8 +15,8 @@ using namespace std;
 AGBNPForce::AGBNPForce() : nonbondedMethod(NoCutoff), cutoffDistance(1.0) {
 }
 
-int AGBNPForce::addParticle(double radius, double charge, bool ishydrogen){
-  ParticleInfo particle(radius, charge, ishydrogen);
+int AGBNPForce::addParticle(double radius, double charge, double vdw_alpha, bool ishydrogen){
+  ParticleInfo particle(radius, charge, vdw_alpha, ishydrogen);
   particles.push_back(particle);
   return particles.size()-1;
 }
@@ -38,12 +38,13 @@ void AGBNPForce::setCutoffDistance(double distance) {
     cutoffDistance = distance;
 }
 
-void AGBNPForce::getParticleParameters(int index,  double& radius, double& gamma, 
+void AGBNPForce::getParticleParameters(int index,  double& radius, double& gamma, double &vdw_alpha,
 				      bool& ishydrogen) const { 
 
     ASSERT_VALID_INDEX(index, particles);
     radius = particles[index].radius;
     gamma = particles[index].gamma;
+    vdw_alpha = particles[index].vdw_alpha;
     ishydrogen = particles[index].ishydrogen;
 }
 
