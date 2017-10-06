@@ -147,7 +147,6 @@ AGBNPI42DLookupTable::AGBNPI42DLookupTable(const vector<double>& Radii, const ve
       int index = h_table->h_enter(key);
       if(index < 0) 
 	throw OpenMMException("AGBNPI42DLookupTable(): internal error: hash table is full");
-      cout << "b: " << Ri << " " << Rj << " " << Ri/Rj << " " << index << endl;
       tables[index] = new AGBNPI4LookupTable(rnodes_count, rmin, rmax, Ri, Rj);
     }
   }

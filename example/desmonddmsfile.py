@@ -340,7 +340,7 @@ class DesmondDMSFile(object):
                         gb.addParticle(list(gb_parms[i]))
                     sys.addForce(gb)
             
-            if implicitSolvent is 'AGBNP':
+            if implicitSolvent is 'AGBNP3':
                 #load AGBNP3 plugin if available
                 try:
                     from AGBNP3plugin import AGBNP3Force
@@ -361,7 +361,7 @@ class DesmondDMSFile(object):
                         self._add_agbnp2_ct(gb)
                         sys.addForce(gb)
                 else:
-                    print('Warning: AGBNP is not supported in this version')
+                    print('Warning: AGBNP3 is not supported in this version')
                 
             if implicitSolvent is 'GVolSA':
                 #load Gaussvol plugin if available
@@ -386,7 +386,6 @@ class DesmondDMSFile(object):
                             radiusN += Roffset;
                             gb.addParticle(radiusN, gammaN, h_flag)
                             #print "Adding", radiusN, gammaN, h_flag
-                        print "Adding GVolforce ..."
                         sys.addForce(gb)
                         print "Done"
                 else:
@@ -413,9 +412,8 @@ class DesmondDMSFile(object):
                             h_flag = ishydrogenN > 0
                             Roffset = 0.05;
                             radiusN += Roffset;
-                            gb.addParticle(radiusN, gammaN, h_flag)
+                            gb.addParticle(radiusN, gammaN, alphaN, chargeN, h_flag)
                             #print "Adding", radiusN, gammaN, h_flag
-                        print "Adding AGBNP force ..."
                         sys.addForce(gb)
                         print "Done"
                 else:

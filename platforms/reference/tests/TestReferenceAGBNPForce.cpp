@@ -23,6 +23,8 @@ using namespace std;
 extern "C" OPENMM_EXPORT void registerAGBNPReferenceKernelFactories();
 
 void testForce() {
+    bool verbose = true;
+    bool veryverbose = false;
     System system;
     AGBNPForce* force = new AGBNPForce();
     system.addForce(force);
@@ -41,7 +43,7 @@ void testForce() {
 
     double sigmaw = 3.15365*ang2nm; /* LJ sigma of TIP4P water oxygen */
     double epsilonw = 0.155*kcalmol2kjmol;        /* LJ epsilon of TIP4P water oxygen */
-    double rho = 0.033428*pow(ang2nm,3);   /* water number density */
+    double rho = 0.033428/pow(ang2nm,3);   /* water number density */
     double epsilon_LJ = 0.155*kcalmol2kjmol;
     double sigma_LJ;
 
@@ -56,7 +58,7 @@ void testForce() {
       double sij = sqrt(sigmaw*sigma_LJ);
       double eij = sqrt(epsilonw*epsilon_LJ);
       double alpha = - 16.0 * M_PI * rho * eij * pow(sij,6) / 3.0;  
-      force->addParticle(radius, gamma, alpha, ishydrogen);      
+      force->addParticle(radius, gamma, alpha, charge, ishydrogen);      
     }
     // Compute the forces and energy.
     VerletIntegrator integ(1.0);
@@ -71,14 +73,23 @@ void testForce() {
     double energy1 = state.getPotentialEnergy();
     std::cout << "Energy: " <<  energy1  << std::endl;
 
+    if(veryverbose){
+      //print out forces for debugging
+      cout << "Forces: " << endl;
+      for(int i = 0; i < numParticles; i++){
+	cout << "FW: " << i << " " << state.getForces()[i][0] << " " << state.getForces()[i][1] << " "  << state.getForces()[i][2] << " "<< endl;      
+      }
+    }
+    
     //#ifdef NOTNOW
     // validate force by moving an atom
-    double offset = 1.e-3;
+    double offset = 2.e-3;
     int pmove = 121;
-    positions[pmove][0] += offset;
+    int direction = 1;
+    positions[pmove][direction] += offset;
     context.setPositions(positions);
     double energy2 = context.getState(State::Energy).getPotentialEnergy();
-    double de = -state.getForces()[pmove][0]*offset;
+    double de = -state.getForces()[pmove][direction]*offset;
     std::cout << "Energy: " <<  energy2  << std::endl;
     std::cout << "Energy Change: " <<  energy2 - energy1  << std::endl;
     std::cout << "Energy Change from Gradient: " <<  de  << std::endl;

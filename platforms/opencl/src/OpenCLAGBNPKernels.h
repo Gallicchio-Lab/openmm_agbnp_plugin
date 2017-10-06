@@ -5,6 +5,7 @@
  *                           OpenMM-AGBNP                                    *
  * -------------------------------------------------------------------------- */
 
+#include "AGBNPUtils.h"
 #include "AGBNPKernels.h"
 #include "openmm/opencl/OpenCLContext.h"
 #include "openmm/opencl/OpenCLArray.h"
@@ -97,7 +98,29 @@ private:
     OpenMM::OpenCLArray* gammaParam1;
     OpenMM::OpenCLArray* gammaParam2;
     OpenMM::OpenCLArray* ishydrogenParam;
+    OpenMM::OpenCLArray* chargeParam;
+    OpenMM::OpenCLArray* alphaParam;
+    OpenMM::OpenCLArray* testBuffer;
 
+    OpenMM::OpenCLArray* selfVolume;
+    OpenMM::OpenCLArray* volScalingFactor;
+    OpenMM::OpenCLArray* BornRadius;
+    OpenMM::OpenCLArray* invBornRadius;
+    OpenMM::OpenCLArray* invBornRadius_fp;
+    OpenMM::OpenCLArray* GBDerY;
+    OpenMM::OpenCLArray* GBDerBrU;
+    OpenMM::OpenCLArray* GBDerU;
+    OpenMM::OpenCLArray* VdWDerBrW;
+    OpenMM::OpenCLArray* VdWDerW;
+    
+    OpenMM::OpenCLArray* selfVolumeBuffer_long;
+    OpenMM::OpenCLArray* selfVolumeBuffer;
+    OpenMM::OpenCLArray* AccumulationBuffer1_long;
+    OpenMM::OpenCLArray* AccumulationBuffer1_real;
+    OpenMM::OpenCLArray* AccumulationBuffer2_long;
+    OpenMM::OpenCLArray* AccumulationBuffer2_real;
+    
+    
     // tree sizes etc
     int total_atoms_in_tree;
     int total_tree_size;
@@ -127,11 +150,13 @@ private:
     OpenMM::OpenCLArray* ovVolume;
     OpenMM::OpenCLArray* ovVSfp;
     OpenMM::OpenCLArray* ovSelfVolume;
+    OpenMM::OpenCLArray* ovVolEnergy;
     OpenMM::OpenCLArray* ovGamma1i;
     /* volume derivatives */
-    OpenMM::OpenCLArray* ovDV1; // real4: dV12/dr1 + dV12/dV1
-    OpenMM::OpenCLArray* ovDV2; // real4: dPsi12/dr2
-
+    OpenMM::OpenCLArray* ovDV1; // real4: dV12/dr1 + dV12/dV1 for each overlap
+    OpenMM::OpenCLArray* ovDV2; // volume gradient accumulator
+    OpenMM::OpenCLArray* ovPF;  //(P) and (F) aux variables
+    
     OpenMM::OpenCLArray* ovLastAtom;
     OpenMM::OpenCLArray* ovRootIndex;
     OpenMM::OpenCLArray* ovChildrenStartIndex;
@@ -143,7 +168,6 @@ private:
     OpenMM::OpenCLArray* ovAtomBuffer;
     OpenMM::OpenCLArray* ovChildrenReported;
 
-    OpenMM::OpenCLArray* ovEnergyBuffer_long;
 
     cl::Kernel resetBufferKernel;
     cl::Kernel resetOvCountKernel;
@@ -165,6 +189,9 @@ private:
     cl::Kernel ResetRescanOverlapTreeKernel;
     cl::Kernel InitRescanOverlapTreeKernel;
     cl::Kernel RescanOverlapTreeKernel;
+    cl::Kernel RescanOverlapTreeGammasKernel_W;
+    cl::Kernel InitOverlapTreeGammasKernel_1body_W;
+    cl::Kernel computeVolumeEnergyKernel;
 
     /* Gaussian atomic parameters */
     vector<float> gaussian_exponent;
@@ -184,6 +211,44 @@ private:
     OpenMM::OpenCLArray*  tree_pos_buffer_temp;
     OpenMM::OpenCLArray*  i_buffer_temp;
     OpenMM::OpenCLArray*  atomj_buffer_temp;
+
+    //Born radii and such
+    AGBNPI42DLookupTable *i4_lut;    
+     int i4_table_size; //x grid
+    float i4_rmin, i4_rmax;  //x grid
+    vector<float>y_i4; //function values
+    vector<float>y2_i4; //derivatives
+    OpenMM::OpenCLArray* i4YValues;
+    OpenMM::OpenCLArray* i4Y2Values;
+    OpenMM::OpenCLArray* testF;
+    OpenMM::OpenCLArray* testDerF;
+
+    OpenMM::OpenCLArray* VdWGBDerForceX;
+    OpenMM::OpenCLArray* VdWGBDerForceY;
+    OpenMM::OpenCLArray* VdWGBDerForceZ;
+    
+
+    
+    cl::Kernel testHashKernel;
+    cl::Kernel testLookupKernel;
+    cl::Kernel initBornRadiiKernel;
+    cl::Kernel inverseBornRadiiKernel;
+    cl::Kernel reduceBornRadiiKernel;
+    cl::Kernel VdWEnergyKernel;
+    cl::Kernel initVdWGBDerBornKernel;
+    cl::Kernel VdWGBDerBornKernel;
+    cl::Kernel reduceVdWGBDerBornKernel;
+    cl::Kernel initGBEnergyKernel;
+    cl::Kernel GBPairEnergyKernel;
+    cl::Kernel reduceGBEnergyKernel;
+
+    unsigned int hsize;
+    unsigned int hmask;
+    unsigned int hjump;
+    OpenMM::OpenCLArray* i4_hash_values;
+    //int max_num_search_values;
+    //OpenMM::OpenCLArray* Rjs;
+    //OpenMM::OpenCLArray* ids_of_values;
 
 
     int verbose_level;

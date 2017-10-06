@@ -52,7 +52,9 @@ simulation.context.setPositions(positions)
 simulation.context.setVelocities(velocities)
 state = simulation.context.getState(getEnergy = True)
 simulation.reporters.append(StateDataReporter(stdout, 10, step=True, potentialEnergy=True,totalEnergy=True,temperature=True))
+start=datetime.now()
 simulation.step(1000)
+end=datetime.now()
 positions = simulation.context.getState(getPositions=True).getPositions()
 velocities = simulation.context.getState(getVelocities=True).getVelocities()
 
@@ -61,6 +63,6 @@ testDes.setPositions(positions)
 testDes.setVelocities(velocities)
 testDes.close()#
 #
-end=datetime.now()
 elapsed=end - start
 print("elapsed time="+str(elapsed.seconds+elapsed.microseconds*1e-6)+"s")
+

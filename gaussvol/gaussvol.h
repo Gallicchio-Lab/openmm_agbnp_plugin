@@ -109,15 +109,46 @@ class GaussVol {
   ~GaussVol( void ){
     tree.overlaps.clear();
   };
+  
+  //reset atomic radii
+  void set_radii(vector<RealOpenMM> &radii){
+    radius1 = radii;
+  }
 
-  /* returns GaussVol total energy and forces */
+  //reset atomic gammas
+  void set_gammas(vector<RealOpenMM> &gammas){
+    gamma = gammas;  
+  }
+  
+  //constructs the tree
+  void compute_tree(vector<RealVec> &positions);
+
+  /* returns GaussVol volume area energy function and forces */
+  /* also returns atomic free-volumes and self-volumes */
+  void compute_volume(vector<RealVec> &positions,
+		      RealOpenMM &volume,
+		      RealOpenMM &energy,
+		      vector<RealVec> &force,
+		      vector<RealOpenMM> &free_volume,  vector<RealOpenMM> &self_volume);
+
+  //rescan the tree resetting gammas and volumes
+  void rescan_tree_volumes(vector<RealVec> &positions,
+			   vector<RealOpenMM> &radius,
+			   vector<RealOpenMM> &gamma);
+
+  //rescan the tree resetting gammas only
+  void rescan_tree_gammas(vector<RealOpenMM> &gamma);
+
+  /* returns GaussVol surface area energy function and forces */
   /* also returns atomic free-volumes, self-volumes, and surface areas */
-  void enerforc(const int init,
-		vector<RealVec> &positions,
-		RealOpenMM &energy,
-		vector<RealVec> &force,
-		vector<RealOpenMM> &free_volume,  vector<RealOpenMM> &self_volume,
-		vector<RealOpenMM> &surface_areas);
+  void compute_surface(const int init,
+		       vector<RealVec> &positions,
+		       RealOpenMM &energy,
+		       vector<RealVec> &force,
+		       vector<RealOpenMM> &surface_areas);
+
+
+
 
   // returns number of overlaps for each atom 
   void getstat(vector<int>& nov, vector<int>& nov_2body);
@@ -128,8 +159,8 @@ class GaussVol {
   vector<RealOpenMM> radius2;
   vector<RealOpenMM> gamma;
   vector<RealVec> grad1, grad2;
-  vector<RealOpenMM> self_volume2;
-  vector<RealOpenMM> free_volume2;
+  vector<RealOpenMM> self_volume1, self_volume2;
+  vector<RealOpenMM> free_volume1, free_volume2;
   vector<bool> ishydrogen;
 };
 

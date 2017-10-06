@@ -101,7 +101,7 @@ __kernel void InitOverlapTree_1body(
       ovLevel[slot] = 1;
       ovVolume[slot] = v;
       ovVSfp[slot] = 1;
-      ovGamma1i[slot] = gammaParam[atom];
+      ovGamma1i[slot] = g;
       ovG[slot] = (real4)(c.xyz,a);
       ovDV1[slot] = (real4)0.f;
       ovLastAtom[slot] = atom;
@@ -186,7 +186,7 @@ __kernel void InitOverlapTreeCount(
 	  real v2 = localData[localAtom2Index].v;
 	  int atom2 = x*TILE_SIZE+tj;
 
-	  if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS && atom1 < atom2) {
+	  if (atom1 < NUM_ATOMS_TREE && atom2 < NUM_ATOMS_TREE && atom1 < atom2) {
 	    COMPUTE_INTERACTION_COUNT
           }
 	  tj = (tj + 1) & (TILE_SIZE - 1);
@@ -267,7 +267,7 @@ void InitOverlapTreeCount_cpu(
 #ifdef USE_CUTOFF
 	    if(r2 < CUTOFF_SQUARED){
 #endif	           
-	      if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS && atom1 < atom2) {
+	      if (atom1 < NUM_ATOMS_TREE && atom2 < NUM_ATOMS_TREE && atom1 < atom2) {
 	         COMPUTE_INTERACTION_COUNT
 	      }
 #ifdef USE_CUTOFF
@@ -359,7 +359,7 @@ __kernel void InitOverlapTree(
 	  LOAD_ATOM2_PARAMETERS
 	  int atom2 = x*TILE_SIZE+tj;
 
-	  if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS && atom1 < atom2) {
+	  if (atom1 < NUM_ATOMS_TREE && atom2 < NUM_ATOMS_TREE && atom1 < atom2) {
             COMPUTE_INTERACTION_STORE1
           }
 	  tj = (tj + 1) & (TILE_SIZE - 1);
@@ -460,7 +460,7 @@ void InitOverlapTree_cpu(
 #ifdef USE_CUTOFF
 	    if(r2 < CUTOFF_SQUARED){
 #endif	       
-	      if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS && atom1 < atom2) {
+	      if (atom1 < NUM_ATOMS_TREE && atom2 < NUM_ATOMS_TREE && atom1 < atom2) {
 		COMPUTE_INTERACTION_STORE1
 	      }
 #ifdef USE_CUTOFF
@@ -718,7 +718,7 @@ __kernel void SortOverlapTree2body(
 				   ){
   uint atom = get_global_id(0); // to start
 
-  while(atom < NUM_ATOMS){
+  while(atom < NUM_ATOMS_TREE){
 
     uint atom_ptr = ovAtomTreePointer[atom];
     int size = ovChildrenCount[atom_ptr];
@@ -1239,7 +1239,7 @@ __kernel void InitRescanOverlapTree(const int ntrees,
 
 #ifdef NOTNOW
 
-    if(atom < NUM_ATOMS){
+    if(atom < NUM_ATOMS_TREE){
 	int pp = ovAtomTreePointer[atom];
 	ovProcessedFlag[pp] = 1; //1body is already done
 	ovOKtoProcessFlag[pp] = 0;
@@ -1351,3 +1351,119 @@ void RescanOverlapTree(const int ntrees,
   }
 }
 
+
+//this kernel initializes the 1-body nodes with a new set of atomic gamma parameters
+__kernel void InitOverlapTreeGammas_1body(
+    unsigned const int             num_padded_atoms,
+    unsigned const int             num_sections,
+    __global const int*   restrict ovTreePointer, 
+    __global const int*   restrict ovNumAtomsInTree, 
+    __global const int*   restrict ovFirstAtom, 
+    __global       int*   restrict ovAtomTreeSize,    //sizes of tree sections
+    __global       int*   restrict NIterations,      
+    __global const int*   restrict ovAtomTreePointer,    //pointers to atoms in tree
+    __global const float* restrict gammaParam, //gamma
+    __global       real*  restrict ovGamma1i
+){
+  const uint id = get_local_id(0); 
+  unsigned int section = get_group_id(0);
+  while(section < num_sections){
+    int natoms_in_section = ovNumAtomsInTree[section];
+    int iat = id;
+    while(iat < natoms_in_section){
+      int atom = ovFirstAtom[section] + iat;    
+
+      real g = gammaParam[atom];
+      int slot = ovAtomTreePointer[atom];
+      ovGamma1i[slot] = g;
+
+      iat += get_local_size(0);
+    }
+    if(id==0) {
+      NIterations[section] = 0;
+    }
+
+    section += get_num_groups(0);
+    barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);    
+  }
+}
+
+
+//Same as RescanOverlapTree above:
+//propagates gamma atomic parameters from the top to the bottom
+//of the overlap tree,
+//it *does not* recompute overlap volumes
+//  used to prep calculations of volume derivatives of GB and van der Waals energies
+__kernel __attribute__((reqd_work_group_size(OV_WORK_GROUP_SIZE,1,1)))
+void RescanOverlapTreeGammas(const int ntrees,
+   __global const int* restrict ovTreePointer,
+   __global const int* restrict ovAtomTreePointer,    //pointers to atom trees
+   __global const int* restrict ovAtomTreeSize,       //actual sizes
+   __global       int* restrict NIterations,
+   __global const int* restrict ovAtomTreePaddedSize, //padded allocated sizes
+   __global const int* restrict ovAtomTreeLock,       //tree locks
+   __global const real* restrict global_atomic_gamma, //atomic gamma
+   __global const int*  restrict ovLevel, //this and below define tree
+   __global       real* restrict ovGamma1i,
+   __global const int*  restrict ovLastAtom,
+   __global const int*  restrict ovRootIndex,
+   __global const int*  restrict ovChildrenStartIndex,
+   __global const int*  restrict ovChildrenCount,
+   __global volatile int*   restrict ovProcessedFlag,
+   __global volatile int*   restrict ovOKtoProcessFlag,
+   __global volatile int*   restrict ovChildrenReported
+   ){
+
+  const uint local_id = get_local_id(0);
+  const uint gsize = OV_WORK_GROUP_SIZE;
+  __local uint nprocessed;
+
+  uint tree = get_group_id(0);
+  while(tree < ntrees){
+    uint tree_ptr = ovTreePointer[tree];
+    uint tree_size = ovAtomTreeSize[tree];
+
+    //this is the number of translations of the calculations window
+    //to cover the tree section
+    //make sure padded tree size is multiple of OV_WORK_GROUP_SIZE  
+    const uint nsections = ovAtomTreePaddedSize[tree]/ gsize ;
+    //start at the top of the tree and iterate until the end of the tree is reached
+    for(uint isection=0; isection < nsections; isection++){
+      uint slot = tree_ptr + isection*OV_WORK_GROUP_SIZE + local_id; //the slot to work on
+      barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);
+      int parent = ovRootIndex[slot];
+      int atom = ovLastAtom[slot];
+      
+      //for(uint iiter = 0; iiter < 2 ; iiter++){
+      do{
+	barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);
+	if(local_id==0) nprocessed = 0;
+	barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);
+	int processed = ovProcessedFlag[slot];
+	int ok2process = ovOKtoProcessFlag[slot];
+	barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);
+	bool letsgo = (parent >= 0 && processed == 0 && ok2process > 0 && atom >= 0);
+	if(letsgo){
+	  atomic_inc(&nprocessed);
+	  real gamma1 = ovGamma1i[parent];
+	  real gamma2 = global_atomic_gamma[atom];
+	  ovGamma1i[slot] = gamma1 + gamma2;
+	  //mark itself as processed and children as okay to process
+	  ovProcessedFlag[slot] = 1;
+	  ovOKtoProcessFlag[slot] = 0;
+	  if(ovChildrenStartIndex[slot] >= 0 && ovChildrenCount[slot] > 0){
+	    for(int i = ovChildrenStartIndex[slot]; i < ovChildrenStartIndex[slot] + ovChildrenCount[slot]; i++){
+	      ovOKtoProcessFlag[i] = 1;
+	    }
+	  }
+	}
+	barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);
+      } while(nprocessed > 0);
+      barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);
+    }
+ 
+    // next tree
+    tree += get_num_groups(0);
+    barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);
+  }
+}

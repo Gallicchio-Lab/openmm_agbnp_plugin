@@ -37,7 +37,7 @@ import simtk.unit as unit
 /*
  * Add units to function outputs.
 */
-%pythonappend AGBNPPlugin::AGBNPForce::getParticleParameters(int index, double& radius, double& gamma, 
+%pythonappend AGBNPPlugin::AGBNPForce::getParticleParameters(int index, double& radius, double& gamma, double& charge,
 							   bool& ishydrogen) const %{
     val[2] = unit.Quantity(val[2], unit.nanometer)
     val[3] = unit.Quantity(val[3], unit.kilojoule_per_mole / (unit.nanometer * unit.nanometer))
@@ -53,7 +53,7 @@ public:
 
     int getNumParticles() const;
 
-    void addParticle(double radius, double gamma, bool ishydrogen);
+    void addParticle(double radius, double gamma, double alpha, double charge, bool ishydrogen);
 
     void updateParametersInContext(OpenMM::Context& context);
 
@@ -73,8 +73,10 @@ public:
     */
     %apply double& OUTPUT {double& radius};
     %apply double& OUTPUT {double& gamma};
+    %apply double& OUTPUT {double& alpha};
+    %apply double& OUTPUT {double& charge};
     %apply bool& OUTPUT {bool& ishydrogen};
-    void getParticleParameters(int index, double& radius, double& gamma, bool& ishydrogen) const; 
+    void getParticleParameters(int index, double& radius, double& gamma, double& alpha, double& gamma, bool& ishydrogen) const; 
 };
 
 }

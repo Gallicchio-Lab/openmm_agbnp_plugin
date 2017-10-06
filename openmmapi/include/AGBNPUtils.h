@@ -11,8 +11,8 @@ using namespace std;
 
 /* A simple open addressing hash table. It is implemented explicitly here mainly to prototype the GPU version.
 
-   The table maps keys (uint's) to positions into an array. Positions in array are initially determined by
-   applying an hashing function (key % hmask). If the location is occupied, another is tried by jumping to
+   The table maps values (positive int's) to positions into an array. Positions in array are initially determined by
+   applying an hashing function (value % hmask). If the location is occupied, another is tried by jumping to
    another until an empty location is found.
 */
 class AGBNPHtable {
@@ -28,17 +28,17 @@ class AGBNPHtable {
 
   //destroys table
   ~AGBNPHtable(){
-    key.clear();
+    values.clear();
   }
 
   //enter a value, returns position in array, or -1 if table is full
   int h_enter(const unsigned int value){
     if(nvalues >= hsize) return -1;
     unsigned int k = (value & hmask);
-    while(key[k] >= 0 && key[k] != value){
+    while(values[k] >= 0 && values[k] != value){
       k = ( (k + hjump) & hmask);
     }
-    key[k] = value;
+    values[k] = value;
     nvalues += 1;
     return (int)k;
   }
@@ -47,11 +47,11 @@ class AGBNPHtable {
   int h_find(const unsigned int value){
     unsigned int k = (value & hmask);
     unsigned int ntries = 0;
-    while(key[k] >= 0 &&  key[k] !=  value && ntries < hsize){
+    while(values[k] >= 0 &&  values[k] !=  value && ntries < hsize){
       k = ( (k+hjump) & hmask);
       ntries += 1;
     }
-    if(key[k] < 0 || ntries >= hsize) return -1;
+    if(values[k] < 0 || ntries >= hsize) return -1;
     return (int)k;
   }
 
@@ -61,17 +61,17 @@ class AGBNPHtable {
 
   void h_print(){
     for(unsigned int k = 0; k < hsize; k++){
-      cout << k << ":" << key[k] << endl;
+      cout << k << ":" << values[k] << endl;
     }
   }
 
- private:
+  // private:
   void h_create(const unsigned int size, const unsigned int jump){
     hsize = two2n_size(size);
     hmask = hsize - 1;
     hjump = jump;
     for(unsigned int k = 0; k < hsize; k++){
-      key.push_back(-1); //-1 means empty
+      values.push_back(-1); //-1 means empty
     }
     nvalues = 0;
   }
@@ -91,7 +91,7 @@ class AGBNPHtable {
   unsigned int hmask;
   unsigned int hjump;
   unsigned int nvalues;
-  vector<int> key;
+  vector<int> values;
 };
 
 //a lookup table based on OpenMM's spline functions
@@ -113,7 +113,6 @@ class AGBNPLookupTable {
   double evalderiv(const double x){
     return SplineFitter::evaluateSplineDerivative(xt, yt, y2t, x);
   }
- private:
   vector<double> xt;
   vector<double> yt;
   vector<double> y2t;
@@ -137,7 +136,6 @@ class AGBNPI4LookupTable {
   double evalderiv(const double x){
     return table->evalderiv(x);
   }
- private:
   AGBNPLookupTable *table;
   double switching_function(double x, double xa, double xb);
   double ogauss(double d2, double pi, double pj, double ai, double aj);
@@ -165,7 +163,9 @@ class AGBNPI42DLookupTable {
 		       const double rmin, const double rmax);
   double eval(const double x, const double b);
   double evalderiv(const double x, const double b);
- private:
+  AGBNPHtable *get_h_table(void){
+    return h_table;
+  }
   AGBNPHtable *h_table;
   vector<AGBNPI4LookupTable*> tables;
   //compares two radii with some precision (rad_precision is set by default in class constructor)

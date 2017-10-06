@@ -48,10 +48,11 @@ public:
      * @param radius      the van der Waals radius of the particle, measured in nm
      * @param gamma       the surface tension parameter, measured in kJ/mol/nm^2
      * @param vdw_alpha   van der Waals solute-solvent interaction energy parameter
+     * @param charge      electrostatic charge
      * @param ishydrogen  if true, this particle is a hydrogen atom (does not contribute to volume)
      * @return the index of the particle that was added
      */
-    int addParticle(double radius, double gamma, double vdw_alpha, bool ishydrogen);
+    int addParticle(double radius, double gamma, double vdw_alpha, double charge, bool ishydrogen);
 
     /**
      * Get the AGBNP parameters for a particle
@@ -60,9 +61,10 @@ public:
      * @param radius      the van der Waals radius of the particle, measured in nm
      * @param gamma       the surface tension parameter, measured in kJ/mol/nm^2
      * @param vdw_alpha   van der Waals solute-solvent interaction energy parameter
+     * @param charge      electric charge
      * @param ishydrogen  if true, this particle is a hydrogen atom
      */
-    void getParticleParameters(int index, double& radius, double& gamma,  double& vdw_alpha,
+    void getParticleParameters(int index, double& radius, double& gamma,  double& vdw_alpha, double &charge,
 			       bool& ishydrogen) const;
     /**
      * Get the number of particles defined for AGBNP
@@ -111,15 +113,16 @@ private:
 class AGBNPForce::ParticleInfo {
  public:
   bool ishydrogen;
-  double radius, gamma, vdw_alpha;
+  double radius, gamma, vdw_alpha, charge;
   ParticleInfo() {
     ishydrogen = false;
     radius = 0.15;
     gamma = 0.0;
+    charge = 0.0;
     vdw_alpha = 0.0;
   }
- ParticleInfo(double radius, double gamma, double vdw_alpha, bool ishydrogen) :
-  radius(radius), gamma(gamma), vdw_alpha(vdw_alpha), ishydrogen(ishydrogen) {  }
+ ParticleInfo(double radius, double gamma, double vdw_alpha, double charge, bool ishydrogen) :
+  radius(radius), gamma(gamma), vdw_alpha(vdw_alpha), charge(charge), ishydrogen(ishydrogen) {  }
  };
  
 } // namespace AGBNPPlugin

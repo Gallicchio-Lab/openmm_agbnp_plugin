@@ -16,18 +16,13 @@ void resetTreeCounters(
   __global                int*   restrict ovOKtoProcessFlag,
   __global          const int*   restrict ovChildrenStartIndex,
   __global          const int*   restrict ovChildrenCount,
-  __global                int*   restrict ovChildrenReported,
-  __global                real*  restrict ovSelfVolume,
-  __global                real4* restrict ovDV2 ){
+  __global                int*   restrict ovChildrenReported
+){
   const unsigned int id = get_local_id(0);  //the index of this thread in the workgroup
   const unsigned int nblock = get_local_size(0); //size of work group
   unsigned int begin = offset + id;
   unsigned int size = offset + tree_size;
   unsigned int end  = offset + padded_tree_size;
-
-  //Looks like these are not needed since computeSelfVolumes_oftree() resets them?
-  //for(int slot=begin; slot<end ; slot+=nblock) ovSelfVolume[slot] = 0;
-  //for(int slot=begin; slot<end ; slot+=nblock) ovDV2[slot] = (real4)0;
 
   for(int slot=begin; slot<end ; slot+=nblock){
     ovProcessedFlag[slot] = (slot >= size) ? 1 : 0; //mark slots with overlaps as not processed
@@ -39,7 +34,6 @@ void resetTreeCounters(
   for(int slot=begin; slot<end ; slot+=nblock){
     ovChildrenReported[slot] = 0;
   }
-
 }
 
 
@@ -53,9 +47,7 @@ __kernel void resetSelfVolumes(const int ntrees,
 			       __global const int*   restrict ovChildrenCount,
 			       __global       int*   restrict ovProcessedFlag,
 			       __global       int*   restrict ovOKtoProcessFlag,
-			       __global       int*   restrict ovChildrenReported,
-			       __global       real*  restrict ovSelfVolume,
-			       __global       real4* restrict ovDV2
+			       __global       int*   restrict ovChildrenReported
 ){
     uint tree = get_group_id(0);      //initial tree
     while (tree < ntrees){
@@ -68,9 +60,7 @@ __kernel void resetSelfVolumes(const int ntrees,
 			ovOKtoProcessFlag,
 			ovChildrenStartIndex,
 			ovChildrenCount,
-			ovChildrenReported,
-			ovSelfVolume,
-			ovDV2);
+			ovChildrenReported);
       tree += get_num_groups(0);
     }
 }
@@ -87,6 +77,7 @@ void resetTreeSection(
 		      __global       real*  restrict ovVolume,
 		      __global       real*  restrict ovVSfp,
 		      __global       real*  restrict ovSelfVolume,
+		      __global       real*  restrict ovVolEnergy,
 		      __global       int*   restrict ovLastAtom,
 		      __global       int*   restrict ovRootIndex,
 		      __global       int*   restrict ovChildrenStartIndex,
@@ -105,6 +96,7 @@ void resetTreeSection(
   for(int slot=begin; slot<end ; slot+=nblock) ovLevel[slot] = 0;
   for(int slot=begin; slot<end ; slot+=nblock) ovVSfp[slot] = 1;
   for(int slot=begin; slot<end ; slot+=nblock) ovSelfVolume[slot] = 0;
+  for(int slot=begin; slot<end ; slot+=nblock) ovVolEnergy[slot] = 0;
   for(int slot=begin; slot<end ; slot+=nblock) ovLastAtom[slot] = -1;
   for(int slot=begin; slot<end ; slot+=nblock) ovRootIndex[slot] = -1;
   for(int slot=begin; slot<end ; slot+=nblock) ovChildrenStartIndex[slot] = -1;
@@ -119,21 +111,23 @@ void resetTreeSection(
 
 __kernel void resetBuffer(unsigned const int             bufferSize,
 			  unsigned const int             numBuffers,
-			  __global       real4* restrict ovAtomBuffer
+			  __global       real4* restrict ovAtomBuffer,
+			  __global        real* restrict selfVolumeBuffer
 #ifdef SUPPORTS_64_BIT_ATOMICS
 			  ,
-			  __global long*   restrict energyBuffer_long
+			  __global long*   restrict selfVolumeBuffer_long
 #endif
 ){
   unsigned int id = get_global_id(0);
 #ifdef SUPPORTS_64_BIT_ATOMICS
   while (id < PADDED_NUM_ATOMS){
-    energyBuffer_long[id] = 0;
+    selfVolumeBuffer_long[id] = 0;
     id += get_global_size(0);
   }
 #else
   while(id < bufferSize*numBuffers){
     ovAtomBuffer[id] = (real4)0;
+    selfVolumeBuffer[id] = 0;
     id += get_global_size(0);
   }
 #endif
@@ -149,6 +143,7 @@ __kernel void resetTree(const int ntrees,
 			__global       real*  restrict ovVolume,
 			__global       real*  restrict ovVSfp,
 			__global       real*  restrict ovSelfVolume,
+			__global       real*  restrict ovVolEnergy,
 			__global       int*   restrict ovLastAtom,
 			__global       int*   restrict ovRootIndex,
 			__global       int*   restrict ovChildrenStartIndex,
@@ -176,6 +171,7 @@ __kernel void resetTree(const int ntrees,
 		     ovVolume,
 		     ovVSfp,
 		     ovSelfVolume,
+		     ovVolEnergy,
 		     ovLastAtom,
 		     ovRootIndex,
 		     ovChildrenStartIndex,
@@ -186,9 +182,6 @@ __kernel void resetTree(const int ntrees,
 		     ovOKtoProcessFlag,
 		     ovChildrenReported
 		     );
-							 //ovAtomTreeSize[atom] = (atom < NUM_ATOMS && !ishydrogenParam[atom]) ? 1 : 0;
-							 //ovLevel[offset] = 1;
-							 //ovLastAtom[offset] = atom;
     ovAtomTreeLock[section] = 0;
     section += get_num_groups(0); //next section  
   }
