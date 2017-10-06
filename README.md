@@ -5,7 +5,7 @@
 A plugin that will implement the AGBNP implicit solvent model [1,2] in OpenMM.
 
 Emilio Gallicchio <egallicchio@brooklyn.cuny.edu>
-Last Modified: January 2017
+Last Modified: October 2017
 
 
 ## License
