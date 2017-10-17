@@ -290,6 +290,11 @@ int OpenCLCalcAGBNPForceKernel::copy_tree_to_device(void){
 void OpenCLCalcAGBNPForceKernel::initialize(const System& system, const AGBNPForce& force) {
     verbose_level = 0;
 
+    //save version
+    version = force.getVersion();
+    if(verbose_level > 0)
+      cout << "OpenCLCalcAGBNPForceKernel::initialize(): AGBNP version " << version << endl;
+    
     if (cl.getPlatformData().contexts.size() > 1)
       throw OpenMMException("AGBNPForce does not support using multiple OpenCL devices");
     
@@ -326,21 +331,22 @@ void OpenCLCalcAGBNPForceKernel::initialize(const System& system, const AGBNPFor
     vector<cl_float> alphaVector(cl.getPaddedNumAtoms());
     vector<cl_int> ishydrogenVector(cl.getPaddedNumAtoms());
     atom_ishydrogen.resize(cl.getPaddedNumAtoms());
-
+    vector<double> vdwrad(numParticles);
     for (int i = 0; i < numParticles; i++) {
       double radius, gamma, alpha, charge;
       bool ishydrogen;
       force.getParticleParameters(i, radius, gamma, alpha, charge, ishydrogen);
-	radiusVector1[i] = (cl_float) radius;
-	radiusVector2[i] = (cl_float) (radius - SA_DR);
-
+	radiusVector1[i] = (cl_float) radius+SA_DR;
+	radiusVector2[i] = (cl_float) radius;
+	vdwrad[i] = radius; //double version for lookup table below
+	
 	atom_ishydrogen[i] = ishydrogen;
 	ishydrogenVector[i] = ishydrogen ? 1 : 0;
 
 	// for surface-area energy use gamma/radius_offset
 	// gamma = 1 for self volume calculation.
 	double g = ishydrogen ? 0 : gamma/SA_DR;
-	gammaVector1[i] = (cl_float)  g;
+	gammaVector1[i] = (cl_float)  g; 
 	gammaVector2[i] = (cl_float) -g;
 	alphaVector[i] =  (cl_float) alpha;
 	chargeVector[i] = (cl_float) charge;
@@ -366,41 +372,28 @@ void OpenCLCalcAGBNPForceKernel::initialize(const System& system, const AGBNPFor
     i4_rmin = 0.;
     i4_rmax = AGBNP_I4LOOKUP_MAXA;
     i4_table_size = AGBNP_I4LOOKUP_NA;
-    vector<double> radii(numParticles);
-    for(int i=0;i<numParticles;i++){
-      radii[i] = (double)radiusVector1[i];
-    }
-    i4_lut = new AGBNPI42DLookupTable(radii, atom_ishydrogen, i4_table_size, i4_rmin, i4_rmax);
-
-    //acquire and upload hash table of i4 tables
-    AGBNPHtable *h_table = i4_lut->get_h_table();
-    hsize = h_table->hsize;
-    hmask = h_table->hmask;
-    hjump = h_table->hjump;
-    i4_hash_values = OpenCLArray::create<cl_int>(cl, hsize, "i4_hash_values");
-    i4_hash_values->upload(h_table->values);
-
-    //constructs and uploads tables to GPU
+    i4_lut = new AGBNPI42DLookupTable(vdwrad, atom_ishydrogen, i4_table_size, i4_rmin, i4_rmax, version);
+    ntypes_screener = i4_lut->ntypes_screener;
+    //upload radius types
+    radtypeScreened = new OpenCLArray(cl, cl.getPaddedNumAtoms(), sizeof(cl_int), "radtypeParam1");
+    radtypeScreener = new OpenCLArray(cl, cl.getPaddedNumAtoms(), sizeof(cl_int), "radtypeParam2");
+    vector<int> types(cl.getPaddedNumAtoms());
+    for(int i = 0; i < numParticles ; i++) types[i] = i4_lut->radius_type_screened[i];
+    radtypeScreened->upload(types);
+    for(int i = 0; i < numParticles ; i++) types[i] = i4_lut->radius_type_screener[i];
+    radtypeScreener->upload(types);
+        
+    //constructs and uploads lookup tables to GPU
     int yy2size = 0;
-    for(int ih = 0; ih < h_table->hsize ; ih++){
-      int key = h_table->values[ih];
-      if(key >= 0){
-	AGBNPI4LookupTable *i4table = i4_lut->tables[ih];
-	AGBNPLookupTable *lut_table = i4table->table;
-	for(int i=0;i<i4_table_size;i++){
-	  y_i4.push_back(lut_table->yt[i]);
-	  y2_i4.push_back(lut_table->y2t[i]);
-	  yy2size += 1;
-	}
-      }else{
-	for(int i=0;i<i4_table_size;i++){
-	  y_i4.push_back(0);
-	  y2_i4.push_back(0);
-	  yy2size += 1;
-	}
+    for(int ih = 0; ih < i4_lut->tables.size() ; ih++){
+      AGBNPI4LookupTable *i4table = i4_lut->tables[ih];
+      AGBNPLookupTable *lut_table = i4table->table;
+      for(int i=0;i<i4_table_size;i++){
+	y_i4.push_back(lut_table->yt[i]);
+	y2_i4.push_back(lut_table->y2t[i]);
+	yy2size += 1;
       }
-    } 
-
+    }
     i4YValues = OpenCLArray::create<cl_float>(cl, yy2size, "i4YValues");
     i4Y2Values = OpenCLArray::create<cl_float>(cl, yy2size, "i4Y2Values");
     i4YValues->upload(y_i4);
@@ -411,16 +404,28 @@ void OpenCLCalcAGBNPForceKernel::initialize(const System& system, const AGBNPFor
     hasCreatedKernels = false;
 }
 
+
 double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeForces, bool includeEnergy) {
+  double energy = 0.0;
+  if (!hasCreatedKernels) {
+    hasCreatedKernels = true;
+    executeInitKernels(context, includeForces, includeEnergy);
+  }
+  if(version == 1){
+    energy = executeAGBNP1(context, includeForces, includeEnergy);
+  }else if(version == 2){
+    energy = executeAGBNP2(context, includeForces, includeEnergy);
+  }
+  return 0.0;
+}
+
+
+void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool includeForces, bool includeEnergy) {
   OpenCLNonbondedUtilities& nb = cl.getNonbondedUtilities();
   bool useLong = cl.getSupports64BitGlobalAtomics();
   bool verbose = verbose_level > 0;
-  niterations += 1;
 
-  if (!hasCreatedKernels) {
-    hasCreatedKernels = true;
-
-    {
+      {
       //run CPU version once to estimate sizes
       GaussVol *gvol;
       std::vector<RealVec> positions;
@@ -446,7 +451,7 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
 	double r, g, alpha, q;
 	bool h;
 	gvol_force->getParticleParameters(i, r, g, alpha, q, h);
-	radii[i] = r;
+	radii[i] = r + SA_DR;
 	gammas[i] = energy_density_param;
 	if(h) gammas[i] = 0.0;
 	ishydrogen[i] = h;
@@ -521,10 +526,13 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
 	std::cout <<  "Tile size: " << OpenCLContext::TileSize << std::endl;
 	std::cout <<  "getNumForceThreadBlocks: " << nb.getNumForceThreadBlocks() << std::endl;
 	std::cout <<  "getForceThreadBlockSize: " << nb.getForceThreadBlockSize() << std::endl;
+	std::cout <<  "numForceBuffers: " <<  nb.getNumForceBuffers() << std::endl;
 	std::cout <<  "Num Tree Sections: " << num_sections << std::endl;
 	std::cout <<  "Work Group Size: " << ov_work_group_size << std::endl;
 	std::cout <<  "Tree Size: " <<  total_tree_size << std::endl;
+	
 
+	
 	if(useCutoff){
 	  vector<cl_int> icount(1024);
 	  nb.getInteractionCount().download(icount);
@@ -587,10 +595,6 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
       AccumulationBuffer2_long = OpenCLArray::create<cl_long>(cl, cl.getPaddedNumAtoms(), "AccumulationBuffer2_long");
 
 
-      VdWGBDerForceX = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms(), "VdWGBDerForceX");
-      VdWGBDerForceY = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms(), "VdWGBDerForceY");
-      VdWGBDerForceZ = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms(), "VdWGBDerForceZ");
-      
       // atom-level properties
       selfVolume = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms(), "selfVolume");
       volScalingFactor = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms(), "volScalingFactor");
@@ -1428,7 +1432,7 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
       //  used to prep calculations of volume derivatives of van der Waals energy
       kernel_name = "RescanOverlapTreeGammas";
       replacements["KERNEL_NAME"] = kernel_name;
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
+      if(verbose) cout << "compiling " << kernel_name << "... ";
       RescanOverlapTreeGammasKernel_W = cl::Kernel(program, kernel_name.c_str());
       if(verbose) cout << " done. " << endl;
       index = 0;
@@ -1451,7 +1455,6 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
       kernel.setArg<cl::Buffer>(index++, ovOKtoProcessFlag->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ovChildrenReported->getDeviceBuffer());
 
-
     }
 
 
@@ -1465,16 +1468,16 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
       defines["NUM_BLOCKS"] = cl.intToString(cl.getNumAtomBlocks());
       defines["TILE_SIZE"] = cl.intToString(OpenCLContext::TileSize);
       defines["OV_WORK_GROUP_SIZE"] = cl.intToString(ov_work_group_size);
-      
 
       map<string, string> replacements;
       string file = cl.replaceStrings(OpenCLAGBNPKernelSources::GVolSelfVolume, replacements);
+      if(verbose) cout << "compiling file GVolSelfVolume.cl ... ";
       cl::Program program = cl.createProgram(file, defines);
 
       //accumulates self volumes and volume energy function (and forces)
       //with the energy-per-unit-volume parameters (Gamma1i) currently loaded into tree
       string kernel_name = "computeSelfVolumes";
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
+      if(verbose) cout << "compiling kernel " << kernel_name << " ... ";
       computeSelfVolumesKernel = cl::Kernel(program, kernel_name.c_str());
       if(verbose) cout << " done. " << endl;      
       cl::Kernel kernel = computeSelfVolumesKernel;
@@ -1566,14 +1569,16 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
       defines["NTILES_IN_BLOCK"] = "1";//cl.intToString(ov_work_group_size/OpenCLContext::TileSize);
 
       map<string, string> replacements;
-      string kernel_name = "reduceSelfVolumes_buffer";
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      //cout << "compiling " << kernel_name << endl;
+
 
       string file = OpenCLAGBNPKernelSources::GVolReduceTree;
+      if(verbose) cout << "compiling file GVolReduceTree.cl ... ";
       cl::Program program = cl.createProgram(file, defines);
-      if(verbose) cout << " done. " << endl;
+      
+      string kernel_name = "reduceSelfVolumes_buffer";
+      if(verbose) cout << "compiling " << kernel_name << " ... ";
       reduceSelfVolumesKernel_buffer = cl::Kernel(program, kernel_name.c_str());
+      if(verbose) cout << " done. " << endl;
       cl::Kernel kernel = reduceSelfVolumesKernel_buffer;
       int index = 0;
       kernel.setArg<cl_int>(index++, cl.getPaddedNumAtoms());
@@ -1591,119 +1596,15 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
       kernel.setArg<cl::Buffer>(index++, cl.getEnergyBuffer().getDeviceBuffer());
     }
 
-#ifdef NOTNOW
-    {//kernel to test hash table to find i4 lookup table based on radii combinations
-      //upload hash table
-      AGBNPHtable *h_table = i4_lut->get_h_table();
-      h_table->h_print();
-      unsigned int hsize = h_table->hsize;
-      unsigned int hmask = h_table->hmask;
-      unsigned int hjump = h_table->hjump;
-      i4_hash_values = OpenCLArray::create<cl_int>(cl, hsize, "i4_hash_values");
-      i4_hash_values->upload(h_table->values);
-
-      // get list of radii
-      unsigned int nradii = 0;
-      float Ri;
-      int iat = 1;
-      vector<float>radii;
-      for (int i = 0; i < numParticles; i++) {
-	double radius, gamma, alpha, q;
-	bool h;
- 	gvol_force->getParticleParameters(i, radius, gamma, alpha, q, h);
-	if(i == iat){
-	  Ri = radius;
-	}else if(!h) {
-	  radii.push_back(radius);
-	  nradii += 1;
-	}
-      }
-
-      max_num_search_values = nradii;
-      Rjs = OpenCLArray::create<cl_float>(cl, nradii, "Rjs");
-      ids_of_values = OpenCLArray::create<cl_int>(cl, nradii, "ids_of_values");
-      Rjs->upload(radii);
-
-      //hash table kernel
-      map<string, string> defines;
-      defines["NUM_ATOMS"] = cl.intToString(cl.getNumAtoms());
-      defines["AGBNP_RADIUS_INCREMENT"] = cl.doubleToString(AGBNP_RADIUS_INCREMENT);
-      defines["AGBNP_RADIUS_PRECISION"] = cl.intToString(AGBNP_RADIUS_PRECISION);
-
-      map<string, string> replacements;
-      string file, kernel_name;
-      cl::Program program;
-      int index;
-      cl::Kernel kernel;
-
-      kernel_name = "testHash";
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      file = cl.replaceStrings(OpenCLAGBNPKernelSources::AGBNPBornRadii, replacements);
-      program = cl.createProgram(file, defines);
-      //testHash kernel
-      testHashKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
-      index = 0;
-      kernel = testHashKernel;
-      kernel.setArg<cl_uint>(index++, h_table->hsize);
-      kernel.setArg<cl_uint>(index++, h_table->hmask);
-      kernel.setArg<cl_uint>(index++, h_table->hjump);
-      kernel.setArg<cl::Buffer>(index++, i4_hash_values->getDeviceBuffer());
-      kernel.setArg<cl_uint>(index++, nradii);
-      kernel.setArg<cl_float>(index++, Ri);
-      kernel.setArg<cl::Buffer>(index++, Rjs->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ids_of_values->getDeviceBuffer());
-    }
-
-
-    {
-      int itable = 24;
-      int num_values = 4*i4_table_size;
-      testF = OpenCLArray::create<cl_float>(cl, num_values, "testF");
-      testDerF = OpenCLArray::create<cl_float>(cl, num_values, "testDerF");
-
-      //hash table kernel
-      map<string, string> defines;
-      defines["NUM_ATOMS"] = cl.intToString(cl.getNumAtoms());
-      defines["PADDED_NUM_ATOMS"] = cl.intToString(cl.getPaddedNumAtoms());
-      defines["AGBNP_RADIUS_INCREMENT"] = cl.doubleToString(AGBNP_RADIUS_INCREMENT);
-      defines["AGBNP_RADIUS_PRECISION"] = cl.intToString(AGBNP_RADIUS_PRECISION);
-
-      map<string, string> replacements;
-      string file, kernel_name;
-      cl::Program program;
-      int index;
-      cl::Kernel kernel;
-
-      kernel_name = "testLookup";
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      file = cl.replaceStrings(OpenCLAGBNPKernelSources::AGBNPBornRadii, replacements);
-      program = cl.createProgram(file, defines);
-      // testLookup kernel
-      testLookupKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
-      index = 0;
-      kernel = testLookupKernel;
-      kernel.setArg<cl_int>(index++, i4_table_size);
-      kernel.setArg<cl_float>(index++, i4_rmin);
-      kernel.setArg<cl_float>(index++, i4_rmax);
-      kernel.setArg<cl::Buffer>(index++, i4YValues->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, i4Y2Values->getDeviceBuffer());
-      kernel.setArg<cl_int>(index++, itable);
-      kernel.setArg<cl_int>(index++, num_values);
-      kernel.setArg<cl::Buffer>(index++, testF->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, testDerF->getDeviceBuffer());
-    }
-#endif
-    
     {
       //Born radii initialization and calculation kernels
       map<string, string> defines;
       defines["NUM_ATOMS"] = cl.intToString(cl.getNumAtoms());
       defines["PADDED_NUM_ATOMS"] = cl.intToString(cl.getPaddedNumAtoms());
-      defines["AGBNP_RADIUS_INCREMENT"] = cl.doubleToString(AGBNP_RADIUS_INCREMENT);
+      double roffset = (version == 2)? AGBNP_RADIUS_INCREMENT: 0.0;
+      defines["AGBNP_RADIUS_INCREMENT"] = cl.doubleToString(roffset);
       defines["AGBNP_HB_RADIUS"] = cl.doubleToString(AGBNP_HB_RADIUS);
-      defines["AGBNP_RADIUS_PRECISION"] = cl.intToString(AGBNP_RADIUS_PRECISION);
+      defines["AGBNP_RADIUS_PRECISION"] = cl.intToString(AGBNP_RADIUS_PRECISION) + "u";
       defines["TILE_SIZE"] = cl.intToString(OpenCLContext::TileSize);
       defines["FORCE_WORK_GROUP_SIZE"] = cl.intToString(ov_work_group_size);
       if (useCutoff)
@@ -1719,10 +1620,33 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
       int index;
       cl::Kernel kernel;
 
-      if(verbose) cout << "compiling AGBNPBornRadii.cl" << " ... ";
+      if(verbose) cout << "compiling file AGBNPBornRadii.cl" << " ... ";
       file = cl.replaceStrings(OpenCLAGBNPKernelSources::AGBNPBornRadii, replacements);
       program = cl.createProgram(file, defines);
 
+
+      int itable = 21;
+      int num_values = 4*i4_table_size;
+      testF = OpenCLArray::create<cl_float>(cl, num_values, "testF");
+      testDerF = OpenCLArray::create<cl_float>(cl, num_values, "testDerF");
+      kernel_name = "testLookup";
+      // testLookup kernel
+      testLookupKernel = cl::Kernel(program, kernel_name.c_str());
+      if(verbose) cout << " done. " << endl;
+      index = 0;
+      kernel = testLookupKernel;
+      kernel.setArg<cl_int>(index++, i4_table_size);
+      kernel.setArg<cl_float>(index++, i4_rmin);
+      kernel.setArg<cl_float>(index++, i4_rmax);
+      kernel.setArg<cl::Buffer>(index++, i4YValues->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, i4Y2Values->getDeviceBuffer());
+      kernel.setArg<cl_int>(index++, itable);
+      kernel.setArg<cl_int>(index++, num_values);
+      kernel.setArg<cl::Buffer>(index++, testF->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, testDerF->getDeviceBuffer());
+
+
+      
       //initBornRadii kernel
       kernel_name = "initBornRadii";
       if(verbose) cout << "compiling " << kernel_name << " ... ";
@@ -1734,11 +1658,12 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
       kernel.setArg<cl_uint>(index++, num_compute_units);     //numBuffers
       if(useLong) kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_long->getDeviceBuffer()); //invBornRadiusBuffer_long
       kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_real->getDeviceBuffer()); //invBornRadiusBuffer
-      kernel.setArg<cl::Buffer>(index++, radiusParam1->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, radiusParam2->getDeviceBuffer()); //van der Waals radii
       kernel.setArg<cl::Buffer>(index++, selfVolume->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, volScalingFactor->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, invBornRadius->getDeviceBuffer());
 
+      
       bool deviceIsCpu = (cl.getDevice().getInfo<CL_DEVICE_TYPE>() == CL_DEVICE_TYPE_CPU);
       if(deviceIsCpu){
 	kernel_name = "inverseBornRadii_cpu";
@@ -1752,7 +1677,6 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
       index = 0;
       kernel = inverseBornRadiiKernel;
       kernel.setArg<cl::Buffer>(index++, cl.getPosq().getDeviceBuffer() );
-      kernel.setArg<cl::Buffer>(index++, radiusParam1->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, volScalingFactor->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ishydrogenParam->getDeviceBuffer() );
       //neighbor list
@@ -1763,11 +1687,10 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
       }else{
 	kernel.setArg<cl_uint>(index++, cl.getNumAtomBlocks()*(cl.getNumAtomBlocks()+1)/2);
       }
-      //dictionary of table indexes
-      kernel.setArg<cl_uint>(index++, hsize);
-      kernel.setArg<cl_uint>(index++, hmask);
-      kernel.setArg<cl_uint>(index++, hjump);
-      kernel.setArg<cl::Buffer>(index++, i4_hash_values->getDeviceBuffer());
+      //radius type indexes
+      kernel.setArg<cl_int>(index++, ntypes_screener);
+      kernel.setArg<cl::Buffer>(index++, radtypeScreened->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, radtypeScreener->getDeviceBuffer());
       //spline lookup tables
       kernel.setArg<cl_int>(index++, i4_table_size);
       kernel.setArg<cl_float>(index++, i4_rmin);
@@ -1790,7 +1713,7 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
       kernel.setArg<cl_uint>(index++, num_compute_units);     //numBuffers
       if(useLong) kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_long->getDeviceBuffer()); //invBornRadiusBuffer_long
       kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_real->getDeviceBuffer()); //invBornRadiusBuffer
-      kernel.setArg<cl::Buffer>(index++, radiusParam1->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, radiusParam2->getDeviceBuffer()); //van der Waals radii
       kernel.setArg<cl::Buffer>(index++, invBornRadius->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, invBornRadius_fp->getDeviceBuffer()); //derivative of filter function
       kernel.setArg<cl::Buffer>(index++, BornRadius->getDeviceBuffer());
@@ -1841,7 +1764,6 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
       index = 0;
       kernel = VdWGBDerBornKernel;
       kernel.setArg<cl::Buffer>(index++, cl.getPosq().getDeviceBuffer() );
-      kernel.setArg<cl::Buffer>(index++, radiusParam1->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, volScalingFactor->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ishydrogenParam->getDeviceBuffer() );
       //neighbor list
@@ -1852,11 +1774,10 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
       }else{
 	kernel.setArg<cl_uint>(index++, cl.getNumAtomBlocks()*(cl.getNumAtomBlocks()+1)/2);
       }
-      //dictionary of table indexes
-      kernel.setArg<cl_uint>(index++, hsize);
-      kernel.setArg<cl_uint>(index++, hmask);
-      kernel.setArg<cl_uint>(index++, hjump);
-      kernel.setArg<cl::Buffer>(index++, i4_hash_values->getDeviceBuffer());
+      //radius type indexes
+      kernel.setArg<cl_int>(index++, ntypes_screener);
+      kernel.setArg<cl::Buffer>(index++, radtypeScreened->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, radtypeScreener->getDeviceBuffer());
       //spline lookup tables
       kernel.setArg<cl_int>(index++, i4_table_size);
       kernel.setArg<cl_float>(index++, i4_rmin);
@@ -1887,13 +1808,9 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
       kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_real->getDeviceBuffer()); 
       if(useLong) kernel.setArg<cl::Buffer>(index++, AccumulationBuffer2_long->getDeviceBuffer()); //GBDerUBuffer
       kernel.setArg<cl::Buffer>(index++, AccumulationBuffer2_real->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, radiusParam1->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, radiusParam2->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, VdWDerW->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, GBDerU->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++,VdWGBDerForceX->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++,VdWGBDerForceY->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++,VdWGBDerForceZ->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, (useLong ? cl.getLongForceBuffer().getDeviceBuffer() : cl.getForceBuffers().getDeviceBuffer())); //master force buffer      
     }
 
     {
@@ -1929,6 +1846,7 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
 
       //initGBEnergy kernel
       kernel_name = "initGBEnergy";
+      if(verbose) cout << "compiling kernel " << kernel_name << " ... " ;
       initGBEnergyKernel = cl::Kernel(program, kernel_name.c_str());
       index = 0;
       kernel = initGBEnergyKernel;
@@ -1938,7 +1856,8 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
       kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_real->getDeviceBuffer()); //GB energy buffer
       if(useLong) kernel.setArg<cl::Buffer>(index++, AccumulationBuffer2_long->getDeviceBuffer()); //Y buffer (long)
       kernel.setArg<cl::Buffer>(index++, AccumulationBuffer2_real->getDeviceBuffer()); //Y
-
+      if(verbose) cout << " done. " << endl;
+      
       //GBPairEnergy kernel
       bool deviceIsCpu = (cl.getDevice().getInfo<CL_DEVICE_TYPE>() == CL_DEVICE_TYPE_CPU);
       if(deviceIsCpu){
@@ -1946,6 +1865,7 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
       }else{
 	kernel_name = "GBPairEnergy";
       }
+      if(verbose) cout << "compiling kernel " << kernel_name << " ... " ;
       GBPairEnergyKernel = cl::Kernel(program, kernel_name.c_str());
       index = 0;
       kernel = GBPairEnergyKernel;
@@ -1967,10 +1887,12 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
       if(useLong) kernel.setArg<cl::Buffer>(index++, AccumulationBuffer2_long->getDeviceBuffer()); //Y buffer (long)
       kernel.setArg<cl::Buffer>(index++, AccumulationBuffer2_real->getDeviceBuffer()); //Y buffer
       kernel.setArg<cl::Buffer>(index++, (useLong ? cl.getLongForceBuffer().getDeviceBuffer() : cl.getForceBuffers().getDeviceBuffer())); //master force buffer      
-      kernel.setArg<cl::Buffer>(index++, cl.getEnergyBuffer().getDeviceBuffer()); //master energy buffer
+      if(verbose) cout << " done. " << endl;
+
       
       //GB energy reduction kernel
       kernel_name = "reduceGBEnergy";
+      if(verbose) cout << "compiling kernel " << kernel_name << " ... " ;
       reduceGBEnergyKernel = cl::Kernel(program, kernel_name.c_str());
       index = 0;
       kernel = reduceGBEnergyKernel;
@@ -1986,11 +1908,20 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
       kernel.setArg<cl::Buffer>(index++, GBDerY->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, GBDerBrU->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, cl.getEnergyBuffer().getDeviceBuffer()); //master energy buffer
+      if(verbose) cout << " done. " << endl;
     }
 
+}
 
-  }
 
+double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool includeForces, bool includeEnergy) {
+  OpenCLNonbondedUtilities& nb = cl.getNonbondedUtilities();
+  bool useLong = cl.getSupports64BitGlobalAtomics();
+  bool verbose = verbose_level > 0;
+  niterations += 1;
+
+  if(verbose) cout << "Executing AGBNP1" << endl;
+  
   //------------------------------------------------------------------------------------------------------------
   // Tree construction
   //  
@@ -2025,12 +1956,8 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
   //------------------------------------------------------------------------------------------------------------
 
 
-
-
-  
-
   //------------------------------------------------------------------------------------------------------------
-  // Self volumes, volume scaling parameters, and volume energy function 1
+  // Volume energy function 1
   //
   if(verbose_level > 2) cout << "Executing resetSelfVolumesKernel" << endl;
   cl.executeKernel(resetSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
@@ -2043,19 +1970,86 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
   cl.executeKernel(reduceSelfVolumesKernel_buffer, ov_work_group_size*num_compute_units, ov_work_group_size);
 
 
+  if(verbose_level > 4){
+    float self_volume = 0.0;
+    vector<cl_float> self_volumes(total_tree_size);
+    vector<cl_float> volumes(total_tree_size);
+    vector<cl_float> energies(total_tree_size);
+    vector<cl_float> gammas(total_tree_size);
+    vector<cl_int> last_atom(total_tree_size);
+    vector<cl_int> level(total_tree_size);
+    vector<cl_int> parent(total_tree_size);
+    vector<cl_int> children_start_index(total_tree_size);
+    vector<cl_int> children_count(total_tree_size);
+    vector<cl_int> children_reported(total_tree_size);
+    vector<mm_float4> g(total_tree_size);
+    vector<mm_float4> dv2(total_tree_size);
+    vector<mm_float4> dv1(total_tree_size);
+    vector<cl_float> sfp(total_tree_size);
+    vector<int> size(num_sections);
+    vector<int> tree_pointer_t(num_sections);
+    vector<cl_int> processed(total_tree_size);
+    vector<cl_int> oktoprocess(total_tree_size);
 
+
+    ovSelfVolume->download(self_volumes);
+    ovVolume->download(volumes);
+    ovVolEnergy->download(energies);
+    ovLevel->download(level);
+    ovLastAtom->download(last_atom);
+    ovRootIndex->download(parent);
+    ovChildrenStartIndex->download(children_start_index);
+    ovChildrenCount->download(children_count);
+    ovChildrenReported->download(children_reported);
+    ovG->download(g);
+    ovGamma1i->download(gammas);
+    ovDV1->download(dv1);
+    ovDV2->download(dv2);
+    ovVSfp->download(sfp);
+    ovAtomTreeSize->download(size);
+    ovTreePointer->download(tree_pointer_t);
+    ovProcessedFlag->download(processed);
+    ovOKtoProcessFlag->download(oktoprocess);
+
+
+
+    std::cout << "Tree:" << std::endl;
+    for(int section = 0; section < num_sections; section++){
+      std::cout << "Tree for sections: " << section << " " << " size= " << size[section] << std::endl;
+      int pp = tree_pointer_t[section];
+      int np = padded_tree_size[section];
+      //self_volume += self_volumes[pp];
+      std::cout << "slot level LastAtom parent ChStart ChCount SelfV V gamma Energy a x y z dedx dedy dedz sfp processed ok2process children_reported" << endl;
+      for(int i = pp; i < pp + np ; i++){
+	int maxprint = pp + 1024;
+	if(i<maxprint){
+	  std::cout << std::setprecision(4) << std::setw(6) << i << " "  << std::setw(7) << (int)level[i] << " " << std::setw(7) << (int)last_atom[i] << " " << std::setw(7) << (int)parent[i] << " "  << std::setw(7) << (int)children_start_index[i] << " " << std::setw(7) <<  (int)children_count[i] << " " << std::setw(15) << (float)self_volumes[i] << " " << std::setw(10) << (float)volumes[i]  << " " << std::setw(10) << (float)gammas[i] << " " << std::setw(10) << (float)energies[i] << " " << std::setw(10) << g[i].w << " " << std::setw(10) << g[i].x << " " << std::setw(10) << g[i].y << " " << std::setw(10) << g[i].z << " " << std::setw(10) << dv2[i].x << " " << std::setw(10) << dv2[i].y << " " << std::setw(10) << dv2[i].z << " " << std::setw(10) << sfp[i] << " " << processed[i] << " " << oktoprocess[i] << " " << children_reported[i] << std::endl;
+	}
+      }
+    }
+    //std::cout << "Volume (from self volumes):" << self_volume <<std::endl;
+  }
+  
+  if(false){
+    vector<int> size(num_sections);
+    vector<int> niter(num_sections);
+    ovAtomTreeSize->download(size);
+    cout << "Sizes: ";
+    for(int section = 0; section < num_sections; section++){
+      std::cout << size[section] << " ";
+    }
+    std::cout << endl;
+    NIterations->download(niter);
+    cout << "Niter: ";
+    for(int section = 0; section < num_sections; section++){
+      std::cout << niter[section] << " ";
+    }
+    std::cout << endl;
+
+  }
 
 
   
-  if(verbose){
-    //print self volumes
-    vector<float> self_volumes(cl.getPaddedNumAtoms());
-    selfVolume->download(self_volumes);
-    for(int i=0;i<numParticles;i++){
-      cout << "self_volume:" << i << "  " << self_volumes[i] << endl;
-    }
-  }
-
   if(verbose){
     vector<int> atom_pointer(cl.getPaddedNumAtoms());
     vector<float> vol_energies(total_tree_size);
@@ -2070,6 +2064,66 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
   }
 
 
+
+  //------------------------------------------------------------------------------------------------------------
+  //------------------------------------------------------------------------------------------------------------
+  // Self volumes, volume scaling parameters,
+  // volume energy function 2, surface area cavity energy function
+  //
+
+  //seeds tree with "negative" gammas and reduced radi
+  if(verbose_level > 2) cout << "Executing InitOverlapTreeKernel_1body_2 " << endl;
+  cl.executeKernel(InitOverlapTreeKernel_1body_2, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing ResetRescanOverlapTreeKernel" << endl;
+  cl.executeKernel(ResetRescanOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+  
+  if(verbose_level > 2) cout << "Executing InitRescanOverlapTreeKernel" << endl;
+  cl.executeKernel(InitRescanOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+  
+  if(verbose_level > 2) cout << "Executing RescanOverlapTreeKernel" << endl;
+  cl.executeKernel(RescanOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+  
+  if(verbose_level > 2) cout << "Executing resetSelfVolumesKernel" << endl;
+  cl.executeKernel(resetSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing resetBufferKernel" << endl;
+  // zero self-volume accumulator
+  cl.executeKernel(resetBufferKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+  
+  if(verbose_level > 2) cout << "Executing computeSelfVolumesKernel" << endl;
+  cl.executeKernel(computeSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  //update energyBuffer with volume energy 2
+  if(verbose_level > 2) cout << "Executing reduceSelfVolumesKernel_buffer" << endl;
+  cl.executeKernel(reduceSelfVolumesKernel_buffer, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+
+  if(verbose){
+    //print self volumes
+    vector<float> self_volumes(cl.getPaddedNumAtoms());
+    selfVolume->download(self_volumes);
+    for(int i=0;i<numParticles;i++){
+      cout << "self_volume:" << i << "  " << self_volumes[i] << endl;
+    }
+  }
+
+
+  if(verbose){
+    vector<int> atom_pointer(cl.getPaddedNumAtoms());
+    vector<float> vol_energies(total_tree_size);
+    ovAtomTreePointer->download(atom_pointer);
+    ovVolEnergy->download(vol_energies);
+    double energy = 0;
+    for(int i=0;i<numParticles;i++){
+      int slot = atom_pointer[i];
+      energy += vol_energies[slot];
+    }
+    cout << "Volume Energy 2:" << energy << endl;
+  }
+
+  
+  
   //------------------------------------------------------------------------------------------------------------
 
 #ifdef NOTNOW
@@ -2100,7 +2154,7 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
   if(verbose_level > 2) cout << "Executing inverseBornRadiiKernel" << endl;
   cl.executeKernel(inverseBornRadiiKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
-  if(verbose && !useLong){
+  if(verbose_level > 3 && !useLong){
     vector<float> inv_br_buffer(cl.getPaddedNumAtoms()*num_compute_units);
     AccumulationBuffer1_real->download(inv_br_buffer);
     for(int cu=0;cu<num_compute_units;cu++){
@@ -2109,6 +2163,16 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
       }
     }
   }
+
+  if(verbose_level > 3 && useLong){
+    vector<long> inv_br_buffer(cl.getPaddedNumAtoms());
+    AccumulationBuffer1_long->download(inv_br_buffer);
+    float scale = 1/(float) 0x100000000;
+    for(int iatom = 0; iatom < cl.getPaddedNumAtoms(); iatom++){
+      cout << "invBR_buff: " << iatom << " " << scale*inv_br_buffer[iatom] << endl;
+    }
+  }
+
   
   if(verbose_level > 2) cout << "Executing reduceBornRadiiKernel" << endl;
   cl.executeKernel(reduceBornRadiiKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
@@ -2123,7 +2187,7 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
       double radius, gamma, alpha, charge;
       bool ishydrogen;
       gvol_force->getParticleParameters(i, radius, gamma, alpha, charge, ishydrogen);
-      cout << "born_radius: " << i << "  " << born_radii[i] << "  " << (radius - AGBNP_RADIUS_INCREMENT) << "  " << sf[i] << endl;
+      cout << "BR " << i << "  " << 10*born_radii[i] << "  " << radius << "  " << sf[i] << endl;
     }
   }    
   //------------------------------------------------------------------------------------------------------------
@@ -2208,7 +2272,7 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
   //------------------------------------------------------------------------------------------------------------
   //Born-radii related derivatives
   //
-  if(verbose_level > 2) cout << "Executing VdWGBDerBornKernel" << endl;
+  if(verbose_level > 2) cout << "Executing initVdWGBDerBornKernel" << endl;
   cl.executeKernel(initVdWGBDerBornKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
   if(verbose_level > 2) cout << "Executing VdWGBDerBornKernel" << endl;
@@ -2237,27 +2301,6 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
     }
   }
 
-  if(verbose){
-    // get VdW forces
-    vector<float> xforce(cl.getPaddedNumAtoms());
-    vector<float> yforce(cl.getPaddedNumAtoms());
-    vector<float> zforce(cl.getPaddedNumAtoms());
-    VdWGBDerForceX->download(xforce);
-    VdWGBDerForceY->download(yforce);
-    VdWGBDerForceZ->download(zforce);
-    double offset = 1.e-3;
-    int pmove = 107;
-    int direction = 1;
-    double f;
-    if(direction == 0) f = xforce[pmove];
-    if(direction == 1) f = yforce[pmove];
-    if(direction == 2) f = zforce[pmove];
-    double de = -f*offset;
-    cout << "Force (AGBNP):" << f << endl ;
-    cout << "deVdw (no volumes, from force) = " << de << endl;
-  }
-  
-  
   //------------------------------------------------------------------------------------------------------------
   //Van der Waals and GB "volume" derivatives
   //
@@ -2285,6 +2328,484 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
   cl.executeKernel(computeVolumeEnergyKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
 
+
+  //temp arrays
+  if(false){
+    vector<cl_int> i_buffer(temp_buffer_size);
+    vector<cl_int> atomj_buffer(temp_buffer_size);
+    vector<cl_uint> tree_pos_buffer(temp_buffer_size);
+    vector<cl_float> gvol_buffer(temp_buffer_size);
+    int stride = ov_work_group_size*64;
+    i_buffer_temp->download(i_buffer);
+    atomj_buffer_temp->download(atomj_buffer);
+    tree_pos_buffer_temp->download(tree_pos_buffer);
+    gvol_buffer_temp->download(gvol_buffer);
+    std::cout << "i_buffer   " << "atomj_buffer  " << "gvol   " << " fij  " <<  std::endl;
+    for(int sect = 0; sect < num_sections; sect++){
+      int buffer_offset = stride*sect;
+      for(int j = 0; j < 640 ; j++){
+	int i = j + buffer_offset;
+	std::cout << i << " " << i_buffer[i] << " " << atomj_buffer[i] << " " << gvol_buffer[i] << " " << tree_pos_buffer[i] << std::endl;
+      }
+    }
+  }
+
+  //gammas
+  if(false){
+    float mol_volume = 0.0;
+    vector<cl_float> gamma(num_sections);
+    AtomicGamma->download(gamma);
+    std::cout << "Gammas:" << std::endl;
+    for(int iat = 0; iat < numParticles; iat++){
+      std::cout << iat << " " << gamma[iat] << std::endl;
+    }
+  }
+
+
+
+#ifdef NOTNOW
+  //force/energy buffer
+  if(false){
+    if(useLong){
+      // TO BE FIXED: OpenMM's energy buffer is the max number of threads, not the number of atoms
+      vector<cl_float> energies(cl.getPaddedNumAtoms());
+
+      vector<cl_long> energies_long(cl.getPaddedNumAtoms());
+      cl.getEnergyBuffer().download(energies);
+      std::cout << "OpenMM Energy Buffer:" << std::endl;
+      for(int i = 0; i < cl.getPaddedNumAtoms(); i++){
+	std::cout << i << " " << energies[i] << std::endl;
+      }
+      ovEnergyBuffer_long->download(energies_long);
+      std::cout << "Long Energy Buffer:" << std::endl;
+      float scale = 1/(float) 0x100000000;
+      for(int i = 0; i < cl.getPaddedNumAtoms(); i++){
+	std::cout << i << " " << scale*energies_long[i] << std::endl;
+      }
+    }else{
+      float mol_volume = 0.0;
+      vector<mm_float4> dv2(num_sections*cl.getPaddedNumAtoms());
+      ovAtomBuffer->download(dv2);
+      
+      std::cout << "Atom Buffer:" << std::endl;
+      for(int i = 0; i < num_sections*cl.getPaddedNumAtoms(); i++){
+	if(i%cl.getPaddedNumAtoms()==0){
+	  std::cout << "Tree: " << i/cl.getPaddedNumAtoms() << " =======================" << endl;
+	}
+	std::cout << i%cl.getPaddedNumAtoms() << " " << dv2[i].x << " " << dv2[i].y << " " << dv2[i].z << " " << dv2[i].w << std::endl;
+      }
+    }
+
+
+
+    //std::cout << "Self Volumes:" << std::endl;
+    //for(int iat = 0; iat < numParticles; iat++){
+    //  std::cout << iat << " " << dv2[iat].w << std::endl;
+    //  mol_volume += dv2[iat].w;
+    //}
+    //std::cout << "Volume (from self volumes):" << mol_volume <<std::endl;
+  }
+#endif
+
+  if(verbose_level > 2) cout << "Done with GVolSA energy" << endl;
+
+  return 0.0;
+}
+
+
+
+double OpenCLCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool includeForces, bool includeEnergy) {
+  OpenCLNonbondedUtilities& nb = cl.getNonbondedUtilities();
+  bool useLong = cl.getSupports64BitGlobalAtomics();
+  bool verbose = verbose_level > 0;
+  niterations += 1;
+
+
+  if(verbose) cout << "Executing AGBNP2" << endl;
+  
+  //------------------------------------------------------------------------------------------------------------
+  // Tree construction
+  //  
+  if(verbose_level > 2) cout << "Executing resetTreeKernel" << endl;
+  //here workgroups cycle through tree sections to reset the tree section
+  cl.executeKernel(resetTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing resetBufferKernel" << endl;
+  // resets either ovAtomBuffer and long energy buffer
+  cl.executeKernel(resetBufferKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing InitOverlapTreeKernel_1body_1" << endl;
+  //fills up tree with 1-body overlaps
+  cl.executeKernel(InitOverlapTreeKernel_1body_1, ov_work_group_size*num_compute_units, ov_work_group_size);
+  
+  if(verbose_level > 2) cout << "Executing InitOverlapTreeCountKernel" << endl;
+  // compute numbers of 2-body overlaps, that is children counts of 1-body overlaps
+  cl.executeKernel(InitOverlapTreeCountKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing reduceovCountBufferKernel" << endl;
+  // do a prefix sum of 2-body counts to compute children start indexes to store 2-body overlaps computed by InitOverlapTreeKernel below
+  cl.executeKernel(reduceovCountBufferKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing InitOverlapTreeKernel" << endl;
+  cl.executeKernel(InitOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing resetComputeOverlapTreeKernel" << endl;
+  cl.executeKernel(resetComputeOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing ComputeOverlapTree_1passKernel" << endl;
+  cl.executeKernel(ComputeOverlapTree_1passKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+  //------------------------------------------------------------------------------------------------------------
+
+
+
+
+  
+
+  //------------------------------------------------------------------------------------------------------------
+  // Self volumes, volume scaling parameters, and volume energy function 1
+  //
+  if(verbose_level > 2) cout << "Executing resetSelfVolumesKernel" << endl;
+  cl.executeKernel(resetSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing computeSelfVolumesKernel" << endl;
+  cl.executeKernel(computeSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+
+  if(verbose_level > 2) cout << "Executing reduceSelfVolumesKernel_buffer" << endl;
+  cl.executeKernel(reduceSelfVolumesKernel_buffer, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+
+
+ 
+
+  
+  if(verbose){
+    //print self volumes
+    vector<float> self_volumes(cl.getPaddedNumAtoms());
+    selfVolume->download(self_volumes);
+    for(int i=0;i<numParticles;i++){
+      cout << "SV " << i << "  " << self_volumes[i] << endl;
+    }
+  }
+
+  if(verbose){
+    vector<int> atom_pointer(cl.getPaddedNumAtoms());
+    vector<float> vol_energies(total_tree_size);
+    ovAtomTreePointer->download(atom_pointer);
+    ovVolEnergy->download(vol_energies);
+    double energy = 0;
+    for(int i=0;i<numParticles;i++){
+      int slot = atom_pointer[i];
+      energy += vol_energies[slot];
+    }
+    cout << "Volume Energy 1:" << energy << endl;
+  }
+
+  if(verbose_level > 4){
+    float self_volume = 0.0;
+    vector<cl_float> self_volumes(total_tree_size);
+    vector<cl_float> volumes(total_tree_size);
+    vector<cl_float> gammas(total_tree_size);
+    vector<cl_int> last_atom(total_tree_size);
+    vector<cl_int> level(total_tree_size);
+    vector<cl_int> parent(total_tree_size);
+    vector<cl_int> children_start_index(total_tree_size);
+    vector<cl_int> children_count(total_tree_size);
+    vector<cl_int> children_reported(total_tree_size);
+    vector<mm_float4> g(total_tree_size);
+    vector<mm_float4> dv2(total_tree_size);
+    vector<cl_float> sfp(total_tree_size);
+    vector<int> size(num_sections);
+    vector<int> tree_pointer_t(num_sections);
+    vector<cl_int> processed(total_tree_size);
+    vector<cl_int> oktoprocess(total_tree_size);
+
+
+    ovSelfVolume->download(self_volumes);
+    ovVolume->download(volumes);
+    ovLevel->download(level);
+    ovLastAtom->download(last_atom);
+    ovRootIndex->download(parent);
+    ovChildrenStartIndex->download(children_start_index);
+    ovChildrenCount->download(children_count);
+    ovChildrenReported->download(children_reported);
+    ovG->download(g);
+    ovGamma1i->download(gammas);
+    ovDV2->download(dv2);
+    ovVSfp->download(sfp);
+    ovAtomTreeSize->download(size);
+    ovTreePointer->download(tree_pointer_t);
+    ovProcessedFlag->download(processed);
+    ovOKtoProcessFlag->download(oktoprocess);
+
+
+
+    std::cout << "Tree:" << std::endl;
+    for(int section = 0; section < num_sections; section++){
+      std::cout << "Tree for sections: " << section << " " << " size= " << size[section] << std::endl;
+      int pp = tree_pointer_t[section];
+      int np = padded_tree_size[section];
+      //self_volume += self_volumes[pp];
+      std::cout << "slot level LastAtom parent ChStart ChCount SelfV V gamma a x y z dedx dedy dedz sfp processed ok2process children_reported" << endl;
+      for(int i = pp; i < pp + np ; i++){
+	int maxprint = pp + 1024;
+	if(i<maxprint){
+	  std::cout << std::setprecision(4) << std::setw(6) << i << " "  << std::setw(7) << (int)level[i] << " " << std::setw(7) << (int)last_atom[i] << " " << std::setw(7) << (int)parent[i] << " "  << std::setw(7) << (int)children_start_index[i] << " " << std::setw(7) <<  (int)children_count[i] << " " << std::setw(15) << (float)self_volumes[i] << " " << std::setw(10) << (float)volumes[i]  << " " << std::setw(10) << (float)gammas[i] << " " << std::setw(10) << g[i].w << " " << std::setw(10) << g[i].x << " " << std::setw(10) << g[i].y << " " << std::setw(10) << g[i].z << " " << std::setw(10) << dv2[i].x << " " << std::setw(10) << dv2[i].y << " " << std::setw(10) << dv2[i].z << " " << std::setw(10) << sfp[i] << " " << processed[i] << " " << oktoprocess[i] << " " << children_reported[i] << std::endl;
+	}
+      }
+    }
+    //std::cout << "Volume (from self volumes):" << self_volume <<std::endl;
+  }
+  
+
+  //------------------------------------------------------------------------------------------------------------
+
+#ifdef NOTNOW
+  if(verbose_level > 2) cout << "Executing testLookupKernel" << endl;
+  cl.executeKernel(testLookupKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+  
+  if(verbose){
+    // print lookup table results
+    vector<float>f(4*i4_table_size);
+    vector<float>derf(4*i4_table_size);
+    testF->download(f);
+    testDerF->download(derf);
+    float dx = 0.03;
+    float x = i4_rmin;
+    for(int i=0;i<4*i4_table_size;i++){
+      cout << "lut: " << x << " " << f[i] << " " << derf[i] << endl;
+      x += dx;
+    }
+  }
+#endif
+
+  //------------------------------------------------------------------------------------------------------------
+  // Born radii
+  //
+  if(verbose_level > 2) cout << "Executing initBornRadiiKernel" << endl;
+  cl.executeKernel(initBornRadiiKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+
+
+  
+  if(verbose_level > 2) cout << "Executing inverseBornRadiiKernel" << endl;
+  cl.executeKernel(inverseBornRadiiKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+
+
+  
+  if(verbose && !useLong){
+    vector<float> inv_br_buffer(cl.getPaddedNumAtoms()*num_compute_units);
+    AccumulationBuffer1_real->download(inv_br_buffer);
+    for(int cu=0;cu<num_compute_units;cu++){
+      for(int iatom = 0; iatom < cl.getPaddedNumAtoms(); iatom++){
+	cout << "BR_buff: " << cu << " " << iatom << " " << inv_br_buffer[cl.getPaddedNumAtoms()*cu + iatom] << endl;
+      }
+    }
+  }
+
+  if(verbose && useLong){
+    vector<long> inv_br_buffer(cl.getPaddedNumAtoms());
+    AccumulationBuffer1_long->download(inv_br_buffer);
+    float scale = 1/(float) 0x100000000;
+    for(int iatom = 0; iatom < cl.getPaddedNumAtoms(); iatom++){
+      cout << "invBR_buff: " << iatom << " " << scale*inv_br_buffer[iatom] << endl;
+    }
+  }
+
+
+  
+  if(verbose_level > 2) cout << "Executing reduceBornRadiiKernel" << endl;
+  cl.executeKernel(reduceBornRadiiKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose){
+    vector<float> inv_br_buffer(cl.getPaddedNumAtoms());
+    invBornRadius->download(inv_br_buffer);
+    for(int iatom = 0; iatom < cl.getPaddedNumAtoms(); iatom++){
+      cout << "invBR_buff: " << iatom << " " << inv_br_buffer[iatom] << endl;
+    }
+  }
+
+  
+  if(verbose){
+    // prints out Born radii
+    vector<float> born_radii(cl.getPaddedNumAtoms());
+    vector<float> sf(cl.getPaddedNumAtoms());
+    BornRadius->download(born_radii);
+    volScalingFactor->download(sf);
+    for(int i=0;i<numParticles;i++){
+      double radius, gamma, alpha, charge;
+      bool ishydrogen;
+      gvol_force->getParticleParameters(i, radius, gamma, alpha, charge, ishydrogen);
+      cout << "BR " << i << "  " << 10*born_radii[i] << "  " << radius << "  " << sf[i] << endl;
+    }
+  }    
+  //------------------------------------------------------------------------------------------------------------
+
+
+
+  
+  //------------------------------------------------------------------------------------------------------------
+  //Van der Waals dispersion energy function
+  //
+  //------------------------------------------------------------------------------------------------------------
+  if(verbose_level > 2) cout << "Executing vdwEnergyKernel" << endl;
+  cl.executeKernel(VdWEnergyKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose){
+    // get the VdW energy (sum over the atoms in the buffer)
+    vector<float> vdw_energies(cl.getPaddedNumAtoms());
+    testBuffer->download(vdw_energies);
+    double vdw_energy = 0.0;
+    for(int i=0; i<numParticles; i++){
+      cout << "EVdW: " << i << " " << vdw_energies[i] << endl;
+      vdw_energy += vdw_energies[i];
+    }
+    cout << "VdW Energy: " << vdw_energy << endl;
+  }
+
+
+  if(verbose){
+    // get the BrW parameters
+    vector<float> brw_params(cl.getPaddedNumAtoms());
+    VdWDerBrW->download(brw_params);
+    for(int i=0; i<numParticles; i++){
+      cout << "BrW: " << i << " " << brw_params[i] << endl;
+    }
+  }
+
+
+
+  
+  //------------------------------------------------------------------------------------------------------------
+  //GB energy function
+  //
+  if(verbose_level > 2) cout << "Executing initGBEnergyKernel" << endl;
+  cl.executeKernel(initGBEnergyKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing GBPairEnergyKernel" << endl;
+  cl.executeKernel(GBPairEnergyKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+
+  if(verbose_level > 3 && !useLong){
+    vector<float> gbdery_buffer(cl.getPaddedNumAtoms()*num_compute_units);
+    AccumulationBuffer1_real->download(gbdery_buffer);
+    for(int cu=0;cu<num_compute_units;cu++){
+      for(int iatom = 0; iatom < cl.getPaddedNumAtoms(); iatom++){
+	cout << "Y_buff: " << cu << " " << iatom << " " << gbdery_buffer[cl.getPaddedNumAtoms()*cu + iatom] << endl;
+      }
+    }
+  }
+
+  
+  if(verbose_level > 2) cout << "Executing reduceGBEnergyKernel" << endl;
+  cl.executeKernel(reduceGBEnergyKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose){
+    // get the GB energy (sum over the atoms in the buffer)
+    vector<float> gb_energies(cl.getPaddedNumAtoms()*num_compute_units);
+    AccumulationBuffer1_real->download(gb_energies);
+    double gb_energy = 0.0;
+    for(int i=0; i<numParticles; i++){
+      cout << "EGB: " << i << " " << gb_energies[i] << endl;
+      gb_energy += gb_energies[i];
+    }
+    cout << "GB Energy: " << gb_energy << endl;
+  }
+
+  if(verbose){
+    // get the Y parameters
+    vector<float> y_params(cl.getPaddedNumAtoms());
+    GBDerY->download(y_params);
+    for(int i=0; i<numParticles; i++){
+      cout << "Y: " << i << " " << y_params[i] << endl;
+    }
+  }
+
+  if(verbose){
+    // get the BrU parameters
+    vector<float> bru_params(cl.getPaddedNumAtoms());
+    GBDerBrU->download(bru_params);
+    for(int i=0; i<numParticles; i++){
+      cout << "BrU: " << i << " " << bru_params[i] << endl;
+    }
+  }
+
+  //------------------------------------------------------------------------------------------------------------
+
+  
+  //------------------------------------------------------------------------------------------------------------
+  //Born-radii related derivatives
+  //
+  if(verbose_level > 2) cout << "Executing initVdWGBDerBornKernel" << endl;
+  cl.executeKernel(initVdWGBDerBornKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing VdWGBDerBornKernel" << endl;
+  cl.executeKernel(VdWGBDerBornKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+
+  if(verbose && !useLong){
+    vector<float> gbderu_buffer(cl.getPaddedNumAtoms()*num_compute_units);
+    AccumulationBuffer2_real->download(gbderu_buffer);
+    for(int cu=0;cu<num_compute_units;cu++){
+      for(int iatom = 0; iatom < cl.getPaddedNumAtoms(); iatom++){
+	cout << "U_buff: " << cu << " " << iatom << " " << gbderu_buffer[cl.getPaddedNumAtoms()*cu + iatom] << endl;
+      }
+    }
+  }
+
+
+  
+  if(verbose_level > 2) cout << "Executing reduceVdWGBDerBornKernel" << endl;
+  cl.executeKernel(reduceVdWGBDerBornKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+
+  if(verbose){
+    // get the U parameters
+    vector<float> u_params(cl.getPaddedNumAtoms());
+    GBDerU->download(u_params);
+    for(int i=0; i<numParticles; i++){
+      cout << "U: " << i << " " << u_params[i] << endl;
+    }
+  }
+
+
+  if(verbose){
+    // get the W parameters
+    vector<float> w_params(cl.getPaddedNumAtoms());
+    VdWDerW->download(w_params);
+    for(int i=0; i<numParticles; i++){
+      cout << "W: " << i << " " << w_params[i] << endl;
+    }
+  }
+
+  //------------------------------------------------------------------------------------------------------------
+  //Van der Waals and GB "volume" derivatives
+  //
+
+  //seeds the top of the tree with van der Waals + GB gamma parameters
+  if(verbose_level > 2) cout << "Executing InitOverlapTreeGammasKernel_1body_W " << endl;
+  cl.executeKernel(InitOverlapTreeGammasKernel_1body_W, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing ResetRescanOverlapTreeKernel " << endl;
+  cl.executeKernel(ResetRescanOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+  
+  if(verbose_level > 2) cout << "Executing InitRescanOverlapTreeKernel " << endl;
+  cl.executeKernel(InitRescanOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  //propagates gamma atomic parameters from the top to the bottom
+  //of the overlap tree
+  if(verbose_level > 2) cout << "Executing RescanOverlapTreeGammasKernel " << endl;
+  cl.executeKernel(RescanOverlapTreeGammasKernel_W, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing resetSelfVolumesKernel" << endl;
+  cl.executeKernel(resetSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+  
+  //collect derivatives from volume energy function with van der Waals gamma parameters
+  if(verbose_level > 2) cout << "Executing computeVolumeEnergyKernel " << endl;
+  cl.executeKernel(computeVolumeEnergyKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  
   if(verbose_level > 4){
     float self_volume = 0.0;
     vector<cl_float> self_volumes(total_tree_size);
@@ -2345,8 +2866,7 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
     //std::cout << "Volume (from self volumes):" << self_volume <<std::endl;
   }
 
-  
-  
+
   //------------------------------------------------------------------------------------------------------------
   //volume energy function 2, surface area cavity energy function
   //
@@ -2375,6 +2895,11 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
   cl.executeKernel(reduceSelfVolumesKernel_buffer, ov_work_group_size*num_compute_units, ov_work_group_size);
 
 
+
+
+
+
+  
   if(verbose){
     vector<int> atom_pointer(cl.getPaddedNumAtoms());
     vector<float> vol_energies(total_tree_size);
@@ -2493,8 +3018,6 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
       std::cout << iat << " " << gamma[iat] << std::endl;
     }
   }
-
-
 
 #ifdef NOTNOW
   //force/energy buffer

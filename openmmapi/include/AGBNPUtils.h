@@ -153,21 +153,24 @@ class AGBNPI4LookupTable {
 //radius offset for Born radii calculation
 //same as radius offset in GaussVol
 #define AGBNP_RADIUS_INCREMENT (SA_DR)
-#define AGBNP_RADIUS_PRECISION (10000)
+#define AGBNP_RADIUS_PRECISION      (10000)
 #define AGBNP_HB_RADIUS (1.4*ANG) //radius of a water molecule
 
 class AGBNPI42DLookupTable {
  public:
   AGBNPI42DLookupTable(const vector<double>& Radii, const vector<bool>& ishydrogen,
 		       const unsigned int size, 
-		       const double rmin, const double rmax);
-  double eval(const double x, const double b);
-  double evalderiv(const double x, const double b);
-  AGBNPHtable *get_h_table(void){
-    return h_table;
-  }
-  AGBNPHtable *h_table;
+		       const double rmin, const double rmax,
+		       const unsigned int version);
+  double eval(const double x, const int rad_typei, const int rad_typej);
+  double evalderiv(const double x, const int rad_typei, const int rad_typej);
   vector<AGBNPI4LookupTable*> tables;
+  //tables are accessed using type_screened * ntypes_screener + type_screener
+  int ntypes_screened; 
+  int ntypes_screener;
+  vector<int> radius_type_screened; //"screened" radius types for each atom
+  vector<int> radius_type_screener; //"screener" radius types for each atom
+
   //compares two radii with some precision (rad_precision is set by default in class constructor)
   struct compare_pp10t {
     bool operator() (const double& dlhs, const double& drhs) const{

@@ -131,6 +131,7 @@ __kernel void resetBuffer(unsigned const int             bufferSize,
     id += get_global_size(0);
   }
 #endif
+  barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);
 }
 
 

@@ -12,6 +12,7 @@
 #include "openmm/Platform.h"
 #include "openmm/System.h"
 #include "openmm/VerletIntegrator.h"
+#include "openmm/NonbondedForce.h"
 #include <cmath>
 #include <iostream>
 #include <vector>
@@ -26,7 +27,10 @@ void testForce() {
     bool verbose = true;
     bool veryverbose = false;
     System system;
+    NonbondedForce *nb = new NonbondedForce(); //needed to set up force buffers
     AGBNPForce* force = new AGBNPForce();
+    force->setVersion(1); 
+    system.addForce(nb); 
     system.addForce(force);
     //read from stdin
     int numParticles = 0;
@@ -53,10 +57,11 @@ void testForce() {
       ishydrogen = (ih > 0);
       radius *= ang2nm;
       gamma *= kcalmol2kjmol/(ang2nm*ang2nm);
-      sigma_LJ = 2.*(radius-0.5*ang2nm);
+      sigma_LJ = 2.*radius;
       double sij = sqrt(sigmaw*sigma_LJ);
       double eij = sqrt(epsilonw*epsilon_LJ);
       double alpha = - 16.0 * M_PI * rho * eij * pow(sij,6) / 3.0;  
+      nb->addParticle(0.0,0.0,0.0);
       force->addParticle(radius, gamma, alpha, charge, ishydrogen);      
     }
     // Compute the forces and energy.
@@ -64,7 +69,7 @@ void testForce() {
     Platform& platform = Platform::getPlatformByName("OpenCL");
     map<string,string> properties;
     //properties["OpenCLPlatformIndex"] = "1";
-    properties["OpenCLPrecision"] = "single";
+    //properties["OpenCLPrecision"] = "single";
     Context context(system, integ, platform, properties);
     context.setPositions(positions);
     State state = context.getState(State::Energy | State::Forces);

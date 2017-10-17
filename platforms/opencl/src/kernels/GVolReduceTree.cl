@@ -38,7 +38,7 @@ __kernel void reduceSelfVolumes_buffer(int bufferSize, int numBuffers,
   
   //accumulate self volumes
   uint atom = id;
-  while (atom < PADDED_NUM_ATOMS) {  
+  while (atom < NUM_ATOMS) {  
 #ifdef SUPPORTS_64_BIT_ATOMICS
    // copy self volumes from long energy buffer to regular one
    selfVolume[atom] = scale*selfVolumeBuffer_long[atom];

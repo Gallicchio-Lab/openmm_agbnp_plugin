@@ -40,7 +40,7 @@ void computeSelfVolumes(const int ntrees,
   __global      long*   restrict forceBuffers,
   __global      long*   restrict selfVolumeBuffer_long,
 #endif
-  __global      real*   restrict selfVolumeBuffer
+   __global      real*   restrict selfVolumeBuffer
 ){
   const uint id = get_local_id(0);
   const uint gsize = get_local_size(0);
@@ -169,7 +169,7 @@ void computeSelfVolumes(const int ntrees,
 	uint tree_offset =  offset + isection*gsize;
 	for(uint is = tree_offset ; is < tree_offset + gsize ; is++){ //loop over slots in section
 	  int at = ovLastAtom[is];
-	  if(at >= 0 && atom < NUM_ATOMS_TREE){
+	  if(at >= 0 && at < NUM_ATOMS_TREE){
 	    // nothing to do here for the volume energy,
 	    // it is automatically stored in ovVolEnergy at the 1-body level
 	    ovAtomBuffer[buffer_offset + at] += (real4)(ovDV2[is].xyz, 0); //.w element was used to store the energy
@@ -218,9 +218,9 @@ void computeVolumeEnergy(const int ntrees,
   __global       int*  restrict ovProcessedFlag,
   __global       int*  restrict ovOKtoProcessFlag,
   __global       int*  restrict ovChildrenReported,
-  __global     real4*  restrict ovAtomBuffer,
+  __global     real4*  restrict ovAtomBuffer
 #ifdef SUPPORTS_64_BIT_ATOMICS
-  __global      long*   restrict forceBuffers
+   , __global      long*   restrict forceBuffers
 #endif
 ){
   const uint id = get_local_id(0);

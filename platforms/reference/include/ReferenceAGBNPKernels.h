@@ -25,7 +25,8 @@ public:
     if(gvol) delete gvol;
     positions.clear();
     ishydrogen.clear();
-    radii.clear();
+    radii_vdw.clear();
+    radii_large.clear();
     gammas.clear();
     vdw_alpha.clear();
     charge.clear();
@@ -54,6 +55,8 @@ public:
      * @return the potential energy due to the force
      */
     double execute(OpenMM::ContextImpl& context, bool includeForces, bool includeEnergy);
+
+    
     /**
      * Copy changed parameters over to a context.
      *
@@ -64,11 +67,13 @@ public:
  
 private:
     GaussVol *gvol; // gaussvol instance
+    unsigned int version; //1 or 2
     //inputs
     int numParticles;
     std::vector<RealVec> positions;
     std::vector<bool> ishydrogen;
-    std::vector<RealOpenMM> radii;
+    std::vector<RealOpenMM> radii_vdw;
+    std::vector<RealOpenMM> radii_large;
     std::vector<RealOpenMM> gammas;
     std::vector<RealOpenMM> vdw_alpha;
     std::vector<RealOpenMM> charge;
@@ -80,6 +85,10 @@ private:
     std::vector<RealOpenMM> inverse_born_radius;
     std::vector<RealOpenMM> inverse_born_radius_fp;
     std::vector<RealOpenMM> born_radius;
+
+    double executeAGBNP1(OpenMM::ContextImpl& context, bool includeForces, bool includeEnergy);
+    double executeAGBNP2(OpenMM::ContextImpl& context, bool includeForces, bool includeEnergy);
+    
 };
 
 } // namespace AGBNPPlugin

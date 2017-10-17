@@ -97,6 +97,15 @@ public:
 
     void updateParametersInContext(OpenMM::Context& context);
 
+    void setVersion(unsigned int agbnp_version){
+      unsigned int max_version = 2;
+      if(agbnp_version > 0 && agbnp_version <= max_version) version = agbnp_version;
+    }
+
+    unsigned int getVersion() const {
+      return version;
+    }
+
 protected:
     OpenMM::ForceImpl* createImpl() const;
 private:
@@ -104,6 +113,7 @@ private:
     std::vector<ParticleInfo> particles;
     NonbondedMethod nonbondedMethod;
     double cutoffDistance;
+    unsigned int version; //1 or 2
 };
 
 /**

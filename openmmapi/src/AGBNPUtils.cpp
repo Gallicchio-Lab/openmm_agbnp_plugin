@@ -96,10 +96,19 @@ double AGBNPI4LookupTable::i4ov(double rij, double Ri, double Rj){
   return i4(rij, Ri, newRj);
 }
 
-
+//lookup table for I4ij integral kernel
+//using units of Rj, the result will be in units of Rj^-1
+//to get the actual numerical value divide by Rj
 AGBNPI4LookupTable::AGBNPI4LookupTable(const unsigned int size, 
 				       const double rmin, const double rmax, 
 				       const double Ri, const double Rj){
+  //dimensionless parameters
+  //  double dmin = rmin/Rj;
+  //double dmax = rmax/Rj;
+  //double ri = Ri/Rj;
+  //double rj = Rj/Rj; //I know: it's 1
+
+  //spacing
   double dr = (rmax - rmin)/(size-1);
 
   //limits of switching function
@@ -116,55 +125,85 @@ AGBNPI4LookupTable::AGBNPI4LookupTable(const unsigned int size,
   table = new AGBNPLookupTable(x,y);
 }
 
-
+//sets of overlap look-up tables indexed in term of bij = Ri/Rj
+//input radii are van der Waals radii (small radii)
 AGBNPI42DLookupTable::AGBNPI42DLookupTable(const vector<double>& Radii, const vector<bool>& ishydrogen,
 					   const unsigned int rnodes_count, 
-					   const double rmin, const double rmax){
+					   const double rmin, const double rmax,
+					   const unsigned int version){
   //constructs set of unique radii in system
   set<double, compare_pp10t> unique_radii_i, unique_radii_j;
-  for(int i = 0; i < Radii.size() ; i++){
-    unique_radii_i.insert(Radii[i] - AGBNP_RADIUS_INCREMENT);
-  }
-  for(int i = 0; i < Radii.size() ; i++){
-    if(!ishydrogen[i]) unique_radii_j.insert(Radii[i]); //hydrogens never descreen
-  }
-  int unique_radii_count_i = unique_radii_i.size();
-  int unique_radii_count_j = unique_radii_j.size();
-  int radii_pairs_count = unique_radii_count_i*unique_radii_count_j; //(Ri-offset)/Rj
+  set<int> unique_keys;
 
-  h_table = new AGBNPHtable(radii_pairs_count); //holds indexes of tables
-  tables.clear();
-  for(int i = 0; i < h_table->size() ; i++){
-    tables.push_back((AGBNPI4LookupTable *)0);
+  for(int i = 0; i < Radii.size() ; i++){
+    unique_radii_i.insert(Radii[i]); //screened atom: small radii
   }
+  double roffset = (version == 2) ? AGBNP_RADIUS_INCREMENT : 0.0; 
+  for(int i = 0; i < Radii.size() ; i++){
+    //screener atoms get "large" radii with AGBNP2
+    if(!ishydrogen[i]) unique_radii_j.insert(Radii[i]+roffset); //hydrogens never descreen
+  }
+  ntypes_screened = unique_radii_i.size();
+  ntypes_screener = unique_radii_j.size();
+
+  //tables are accessed by typei * ntypes_screener + typej
+  //where typei is the type id assigned to Ri and typej the id assigned to Rj
+  tables.resize(ntypes_screened*ntypes_screener); //holds list of tables
+  for(int i = 0; i < tables.size() ; i++){
+    tables[i] = (AGBNPI4LookupTable *)0;
+  }
+
   //constructs lookup tables for all ratios of radii
   set<double, compare_pp10t>::iterator it, jt;
   for (it = unique_radii_i.begin(); it != unique_radii_i.end(); it++) {
     double Ri = *it;
+    int typei = distance(unique_radii_i.begin(),it);
     for (jt = unique_radii_j.begin(); jt != unique_radii_j.end(); jt++) {
       double Rj = *jt;
-      unsigned int key = (Ri/Rj)*AGBNP_RADIUS_PRECISION;
-      int index = h_table->h_enter(key);
-      if(index < 0) 
-	throw OpenMMException("AGBNPI42DLookupTable(): internal error: hash table is full");
+      int typej = distance(unique_radii_j.begin(),jt);
+      unsigned int index = typei * ntypes_screener + typej;
       tables[index] = new AGBNPI4LookupTable(rnodes_count, rmin, rmax, Ri, Rj);
     }
   }
+
+  //assign types to each atom
+  int numParticles = Radii.size();
+  //screened types
+  radius_type_screened.resize(numParticles);
+  for(int i = 0; i < numParticles; i++){
+    it = unique_radii_i.find(Radii[i]);
+    if( it == unique_radii_i.end())
+      throw OpenMMException("AGBNPI42DLookupTable(): internal error: van der Waals radius not in list");
+    int typei = distance(unique_radii_i.begin(),it);
+    radius_type_screened[i] = typei;
+  }
+  //screener types
+  radius_type_screener.resize(numParticles);
+  for(int i = 0; i < numParticles; i++){
+    radius_type_screener[i] = -1;//invalid index for hydrogens
+  }
+  for(int i = 0; i < numParticles; i++){
+    if(ishydrogen[i]) continue;
+    jt = unique_radii_j.find(Radii[i]+roffset);
+    if( jt == unique_radii_j.end())
+      throw OpenMMException("AGBNPI42DLookupTable(): internal error: enlarged van der Waals radius not in list");
+    int typej = distance(unique_radii_j.begin(),jt);
+    radius_type_screener[i] = typej;
+  }
+
 }
 
-double AGBNPI42DLookupTable::eval(const double x, const double b){
-  unsigned int key = b*AGBNP_RADIUS_PRECISION;
-  int index = h_table->h_find(key);
-  if(index < 0) 
-    throw OpenMMException("AGBNPI42DLookupTable::eval(): invalid ratio of radii");
+double AGBNPI42DLookupTable::eval(const double x, const int rad_typei, const int rad_typej){
+  if(rad_typei < 0 || rad_typej < 0 || rad_typei >= ntypes_screened || rad_typej >= ntypes_screener)
+    throw OpenMMException("AGBNPI42DLookupTable::eval(): invalid radius type index");
+  int index = rad_typei * ntypes_screener + rad_typej;
   return tables[index]->eval(x);
 }
 
-double AGBNPI42DLookupTable::evalderiv(const double x, const double b){
-  unsigned int key = b*AGBNP_RADIUS_PRECISION;
-  int index = h_table->h_find(key);
-  if(index < 0) 
-    throw OpenMMException("AGBNPI42DLookupTable::eval(): invalid ratio of radii");
+double AGBNPI42DLookupTable::evalderiv(const double x, const int rad_typei, const int rad_typej){
+  if(rad_typei < 0 || rad_typej < 0 || rad_typei >= ntypes_screened || rad_typej >= ntypes_screener)
+    throw OpenMMException("AGBNPI42DLookupTable::evalderiv(): invalid radius type index");  
+  int index = rad_typei * ntypes_screener + rad_typej;
   return tables[index]->evalderiv(x);
 }
 

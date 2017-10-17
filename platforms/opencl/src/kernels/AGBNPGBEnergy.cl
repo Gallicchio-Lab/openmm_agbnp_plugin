@@ -77,12 +77,10 @@ __kernel void GBPairEnergy(
 #endif
 			       __global real* restrict GBDerYBuffer,
 #ifdef SUPPORTS_64_BIT_ATOMICS
-			     __global long*   restrict forceBuffers,
+			     __global long*   restrict forceBuffers
 #else
-			     __global real4* restrict forceBuffers,
+			     __global real4* restrict forceBuffers
 #endif
-			     __global mixed*  restrict energyBuffer
-			       
 ){
 
   const unsigned int totalWarps = get_global_size(0)/TILE_SIZE;
@@ -192,7 +190,7 @@ __kernel void GBPairEnergy(
     GBDerYBuffer[offset1] += gbdery1;
     forceBuffers[offset1] += force1;
     if(atom2 < PADDED_NUM_ATOMS) {
-      GBDerYBuffer_long[offset2] += localData[get_local_id(0)].gbdery;
+      GBDerYBuffer[offset2] += localData[get_local_id(0)].gbdery;
       forceBuffers[offset2] += localData[get_local_id(0)].force;
     }
 #endif
@@ -221,14 +219,18 @@ void GBPairEnergy_cpu(
 #else
 			       unsigned int numTiles,
 #endif
-			       __global real* restrict GBEnergyBuffer
+
+
+			       __global real* restrict GBEnergyBuffer,
+			       __global real* restrict GBDerYBuffer,
+			       __global real4* restrict forceBuffers
 ){
 
   uint id = get_global_id(0);
   uint ncores = get_global_size(0);
   __local AtomData localData[TILE_SIZE];
 
-  real dielectric_factor = 2.*AGBNP_DIELECTRIC_FACTOR;
+  real dielectric_factor = AGBNP_DIELECTRIC_FACTOR;
   real pt25 = 0.25;
 
   uint warp = id;
@@ -257,6 +259,8 @@ void GBPairEnergy_cpu(
       localData[j].posq = posq[atom2];
       localData[j].posq.w = chargeParam[atom2];
       localData[j].bornr = BornRadius[atom2];
+      localData[j].force = 0;
+      localData[j].gbdery = 0;
     }
 
 
@@ -268,6 +272,8 @@ void GBPairEnergy_cpu(
       real charge1 = chargeParam[atom1];
       real bornr1 = BornRadius[atom1];
       real egb1 = 0;
+      real4 force1 = 0;
+      real gbdery1 = 0;
       
       for (unsigned int j = 0; j < TILE_SIZE; j++) {
 	uint atom2 = x*TILE_SIZE+j;
@@ -278,25 +284,61 @@ void GBPairEnergy_cpu(
 	real bornr2 = localData[j].bornr;
 	real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
 	real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
+	real4 force2 = 0;
+	real gbdery2 = 0;
 	
 	if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS && atom1 < atom2) {
 
-	  real qq = dielectric_factor*charge1*charge2;
+	  real qqf = charge1*charge2;
+	  real qq = dielectric_factor*qqf;
 	  real bb = bornr1*bornr2;
 	  real etij = exp(-pt25*r2/bb);
 	  real fgb = rsqrt(r2 + bb*etij);
-	  egb1 += qq*fgb;
+	  egb1 += 2.*qq*fgb;
+	  real fgb3 = fgb*fgb*fgb;
+	  real mw = -2.0*qq*(1.0-pt25*etij)*fgb3;
+	  real4 g = delta * mw;
+	  force1 += g;
+	  force2 -= g;
+	  real ytij = qqf*(bb+pt25*r2)*etij*fgb3;
+	  gbdery1 += ytij;
+	  gbdery2 += ytij;
 
 	}
+
+	localData[j].force += force2;
+	localData[j].gbdery += gbdery2;
+	
       }
 
-      //update buffers
+      //update buffers for atoms in set 1
       if(atom1 < NUM_ATOMS){
-	unsigned int offset1 = atom1 + id*PADDED_NUM_ATOMS;
-	GBEnergyBuffer[offset1] += egb1;
+	unsigned int offset1 = atom1 + warp*PADDED_NUM_ATOMS;
+      	GBEnergyBuffer[offset1] += egb1;
+      	GBDerYBuffer[offset1] += gbdery1;
+	real4 f = forceBuffers[offset1];
+	f.x += force1.x;
+	f.y += force1.y;
+	f.z += force1.z;
+	forceBuffers[offset1] = f;
       }
       
     }
+
+    //update buffers for atoms in set 2
+    for (unsigned int j = 0; j < TILE_SIZE; j++) {
+      uint atom2 = x*TILE_SIZE+j;
+      if(atom2 < NUM_ATOMS){
+    	unsigned int offset2 = atom2 + warp*PADDED_NUM_ATOMS;	    
+    	GBDerYBuffer[offset2] += localData[j].gbdery;
+	real4 f = forceBuffers[offset2];
+	f.x += localData[j].force.x;
+	f.y += localData[j].force.y;
+	f.z += localData[j].force.z;
+	forceBuffers[offset2] = f;
+      }
+    }
+
     pos++; //new tile
   }
 }
@@ -316,7 +358,7 @@ __kernel void reduceGBEnergy(unsigned const int bufferSize, unsigned const int n
 #ifdef SUPPORTS_64_BIT_ATOMICS
 			      __global const long* restrict GBDerYBuffer_long,
 #endif
-			      __global const real* restrict GBDerYBUffer,
+			      __global const real* restrict GBDerYBuffer,
 
 			      __global       real* restrict GBDerY,
 			      __global       real* restrict GBDerBrU,
@@ -340,17 +382,17 @@ __kernel void reduceGBEnergy(unsigned const int bufferSize, unsigned const int n
     atom += get_global_size(0);
   }
 #else
-  while (atom < PADDED_NUM_ATOMS) {
+  while (atom < NUM_ATOMS) {
     real sum = 0;
     for (int i = atom; i < totalSize; i += bufferSize) sum += GBEnergyBuffer[i];
-    GBEnergyBuffer[atom] += sum;
+    GBEnergyBuffer[atom] = sum;
     atom += get_global_size(0);
   }
 #endif
   barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);    
   //add self energy
   atom = id;
-  while (atom < PADDED_NUM_ATOMS) {
+  while (atom < NUM_ATOMS) {
     real qq = dielectric_factor*chargeParam[atom]*chargeParam[atom];
     GBEnergyBuffer[atom] += qq/BornRadius[atom];
     atom += get_global_size(0);
@@ -358,7 +400,7 @@ __kernel void reduceGBEnergy(unsigned const int bufferSize, unsigned const int n
   barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);
   //copy to OpenMM's energy buffer
   atom = id;
-  while (atom < PADDED_NUM_ATOMS) {
+  while (atom < NUM_ATOMS) {
     energyBuffer[atom] += GBEnergyBuffer[atom];
     atom += get_global_size(0);
   }
@@ -369,22 +411,22 @@ __kernel void reduceGBEnergy(unsigned const int bufferSize, unsigned const int n
   //
   atom = id;
 #ifdef SUPPORTS_64_BIT_ATOMICS
-  while (atom < PADDED_NUM_ATOMS) {  
+  while (atom < NUM_ATOMS) {  
     GBDerY[atom] = scale*GBDerYBuffer_long[atom];
     atom += get_global_size(0);
   }
 #else
-  while (atom < PADDED_NUM_ATOMS) {
+  while (atom < NUM_ATOMS) {
     real sum = 0;
     for (int i = atom; i < totalSize; i += bufferSize) sum += GBDerYBuffer[i];
-    GBDerY[atom] += sum;
+    GBDerY[atom] = sum;
     atom += get_global_size(0);
   }
 #endif
   barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);
   real fac = -dielectric_factor/(4.*PI);
   atom = id;
-  while (atom < PADDED_NUM_ATOMS) {  
+  while (atom < NUM_ATOMS) {  
     GBDerBrU[atom] = fac*(chargeParam[atom]*chargeParam[atom]+GBDerY[atom]*BornRadius[atom])*invBornRadius_fp[atom];
     atom += get_global_size(0);
   }

@@ -85,6 +85,7 @@ private:
     const AGBNPForce *gvol_force;
 
     int numParticles;
+    unsigned int version;
     bool useCutoff;
     bool usePeriodic;
     bool useExclusions;
@@ -102,6 +103,9 @@ private:
     OpenMM::OpenCLArray* alphaParam;
     OpenMM::OpenCLArray* testBuffer;
 
+    OpenMM::OpenCLArray* radtypeScreened;
+    OpenMM::OpenCLArray* radtypeScreener;
+    
     OpenMM::OpenCLArray* selfVolume;
     OpenMM::OpenCLArray* volScalingFactor;
     OpenMM::OpenCLArray* BornRadius;
@@ -213,8 +217,9 @@ private:
     OpenMM::OpenCLArray*  atomj_buffer_temp;
 
     //Born radii and such
+    int ntypes_screener;
     AGBNPI42DLookupTable *i4_lut;    
-     int i4_table_size; //x grid
+    int i4_table_size; //x grid
     float i4_rmin, i4_rmax;  //x grid
     vector<float>y_i4; //function values
     vector<float>y2_i4; //derivatives
@@ -222,12 +227,6 @@ private:
     OpenMM::OpenCLArray* i4Y2Values;
     OpenMM::OpenCLArray* testF;
     OpenMM::OpenCLArray* testDerF;
-
-    OpenMM::OpenCLArray* VdWGBDerForceX;
-    OpenMM::OpenCLArray* VdWGBDerForceY;
-    OpenMM::OpenCLArray* VdWGBDerForceZ;
-    
-
     
     cl::Kernel testHashKernel;
     cl::Kernel testLookupKernel;
@@ -242,16 +241,13 @@ private:
     cl::Kernel GBPairEnergyKernel;
     cl::Kernel reduceGBEnergyKernel;
 
-    unsigned int hsize;
-    unsigned int hmask;
-    unsigned int hjump;
-    OpenMM::OpenCLArray* i4_hash_values;
-    //int max_num_search_values;
-    //OpenMM::OpenCLArray* Rjs;
-    //OpenMM::OpenCLArray* ids_of_values;
-
 
     int verbose_level;
+
+    void executeInitKernels(ContextImpl& context, bool includeForces, bool includeEnergy);
+    double executeAGBNP1(ContextImpl& context, bool includeForces, bool includeEnergy);
+    double executeAGBNP2(ContextImpl& context, bool includeForces, bool includeEnergy); 
+
 };
 
 } // namespace AGBNPPlugin
