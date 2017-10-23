@@ -19,7 +19,8 @@ system = testDes.createSystem(nonbondedMethod=NoCutoff, OPLS = True, implicitSol
 #prop = {}
 
 platform = Platform.getPlatformByName('OpenCL')
-prop = {"OpenCLPrecision" : "single"}
+prop = {}
+#prop = {"OpenCLPrecision" : "single"}
 #prop= {"OpenCLPrecision" : "single", "OpenCLPlatformIndex" : "1", "OpenCLDeviceIndex": "0"};
 
 
@@ -27,7 +28,7 @@ prop = {"OpenCLPrecision" : "single"}
 print "Minimization/equilibration ..."
 
 integrator = LangevinIntegrator(300*kelvin, 1.0/picosecond, 0.0005*picoseconds)
-simulation = Simulation(testDes.topology, system, integrator,platform)
+simulation = Simulation(testDes.topology, system, integrator,platform, prop)
 print "Using platform %s" % simulation.context.getPlatform().getName()
 simulation.context.setPositions(testDes.positions)
 simulation.context.setVelocities(testDes.velocities)
@@ -47,7 +48,7 @@ velocities = simulation.context.getState(getVelocities=True).getVelocities()
 print "Test energy conservation ..."
 
 integrator = VerletIntegrator(0.001*picoseconds)
-simulation = Simulation(testDes.topology, system, integrator,platform)
+simulation = Simulation(testDes.topology, system, integrator,platform,prop)
 simulation.context.setPositions(positions)
 simulation.context.setVelocities(velocities)
 state = simulation.context.getState(getEnergy = True)

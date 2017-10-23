@@ -127,74 +127,176 @@ __kernel void InitOverlapTreeCount(
     __global const real* restrict global_gaussian_exponent, //atomic Gaussian exponent
     __global const real* restrict global_gaussian_volume, //atomic Gaussian volume
 #ifdef USE_CUTOFF
-    __global const int* restrict tiles, __global const unsigned int* restrict interactionCount, 
-    unsigned int maxTiles,
+    __global const int* restrict tiles, __global const unsigned int* restrict interactionCount, __global const int* restrict interactingAtoms, unsigned int maxTiles, __global const ushort2* exclusionTiles,
 #else
     unsigned int numTiles,
 #endif
     __global       int*  restrict ovChildrenCount
-    ){
-    const unsigned int totalWarps = get_global_size(0)/TILE_SIZE;
-    const unsigned int warp = get_global_id(0)/TILE_SIZE;
-    const unsigned int tgx = get_local_id(0) & (TILE_SIZE-1); //warp id in group
-    const unsigned int tbx = get_local_id(0) - tgx;           //id in warp
-    __local AtomData localData[FORCE_WORK_GROUP_SIZE];
-    const unsigned int localAtomIndex = get_local_id(0);
-
-    INIT_VARS
+){
+  const unsigned int totalWarps = get_global_size(0)/TILE_SIZE;
+  const unsigned int warp = get_global_id(0)/TILE_SIZE;
+  const unsigned int tgx = get_local_id(0) & (TILE_SIZE-1); //warp id in group
+  const unsigned int tbx = get_local_id(0) - tgx;           //id in warp
+  __local AtomData localData[FORCE_WORK_GROUP_SIZE];
+  const unsigned int localAtomIndex = get_local_id(0);
+  __local int atomIndices[FORCE_WORK_GROUP_SIZE];
+  INIT_VARS
 
 #ifdef USE_CUTOFF
-    unsigned int numTiles = interactionCount[0];
-    int pos = (int) (warp*(numTiles > maxTiles ? NUM_BLOCKS*((long)NUM_BLOCKS+1)/2 : (long)numTiles)/totalWarps);
-    int end = (int) ((warp+1)*(numTiles > maxTiles ? NUM_BLOCKS*((long)NUM_BLOCKS+1)/2 : (long)numTiles)/totalWarps);
-#else
-    int pos = (int) (warp*(long)numTiles/totalWarps);
-    int end = (int) ((warp+1)*(long)numTiles/totalWarps);
+  //OpenMM's neighbor list stores tiles with exclusions separately from other tiles
+      
+  // First loop: process tiles that contain exclusions
+  // (this is imposed by OpenMM's neighbor list format, AGBNP does not actually have exclusions)
+  const unsigned int firstExclusionTile = FIRST_EXCLUSION_TILE+warp*(LAST_EXCLUSION_TILE-FIRST_EXCLUSION_TILE)/totalWarps;
+  const unsigned int lastExclusionTile = FIRST_EXCLUSION_TILE+(warp+1)*(LAST_EXCLUSION_TILE-FIRST_EXCLUSION_TILE)/totalWarps;
+  for (int pos = firstExclusionTile; pos < lastExclusionTile; pos++) {
+    const ushort2 tileIndices = exclusionTiles[pos];
+    uint x = tileIndices.x;
+    uint y = tileIndices.y;
+       
+    uint atom1 = y*TILE_SIZE + tgx;
+    int atom1_tree_ptr = ovAtomTreePointer[atom1];
+    
+    // Load atom data for this tile.
+    real4 posq1 = posq[atom1];
+    real a1 = global_gaussian_exponent[atom1];
+    real v1 = global_gaussian_volume[atom1];
+    
+    unsigned int j = x*TILE_SIZE + tgx;
+    localData[localAtomIndex].posq = posq[j];
+    localData[localAtomIndex].g.w = global_gaussian_exponent[j];
+    localData[localAtomIndex].v = global_gaussian_volume[j];
+
+    SYNC_WARPS;
+
+    if(y==x){//diagonal tile
+    
+      unsigned int tj = tgx;
+      for (j = 0; j < TILE_SIZE; j++) {
+	
+	int localAtom2Index = tbx+tj;
+	real4 posq2 = localData[localAtom2Index].posq;
+	real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
+	real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
+	real a2 = localData[localAtom2Index].g.w;
+	real v2 = localData[localAtom2Index].v;
+	int atom2 = x*TILE_SIZE+tj;
+	
+	if (atom1 < NUM_ATOMS_TREE && atom2 < NUM_ATOMS_TREE && atom1 < atom2 && r2 < CUTOFF_SQUARED) {
+	  COMPUTE_INTERACTION_COUNT
+	}
+	tj = (tj + 1) & (TILE_SIZE - 1);
+	SYNC_WARPS;
+      }
+
+    }else{//off-diagonal tile, pairs are unique, don't need to check atom1<atom2
+
+      unsigned int tj = tgx;
+      for (j = 0; j < TILE_SIZE; j++) {
+	
+	int localAtom2Index = tbx+tj;
+	real4 posq2 = localData[localAtom2Index].posq;
+	real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
+	real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
+	real a2 = localData[localAtom2Index].g.w;
+	real v2 = localData[localAtom2Index].v;
+	int atom2 = x*TILE_SIZE+tj;
+	
+	if (atom1 < NUM_ATOMS_TREE && atom2 < NUM_ATOMS_TREE && r2 < CUTOFF_SQUARED) {
+	  COMPUTE_INTERACTION_COUNT
+	}
+	tj = (tj + 1) & (TILE_SIZE - 1);
+	SYNC_WARPS;
+      }
+
+    }
+      
+    SYNC_WARPS;
+    pos++;
+  }
+#endif //USE_CUTOFF
+
+
+  //second loop, tiles without exclusions or all interactions if not using cutoffs
+#ifdef USE_CUTOFF
+  unsigned int numTiles = interactionCount[0];
+  if(numTiles > maxTiles)
+    return; // There wasn't enough memory for the neighbor list.
 #endif
-    while (pos < end) {
-        // Extract the coordinates of this tile.
-	int y = (int) floor(NUM_BLOCKS+0.5f-SQRT((NUM_BLOCKS+0.5f)*(NUM_BLOCKS+0.5f)-2*pos));
-        int x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
-	if (x < y || x >= NUM_BLOCKS) { // Occasionally happens due to roundoff error.
-	  y += (x < y ? -1 : 1);
-	  x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
-	}
+  int pos = (int) (warp*(long)numTiles/totalWarps);
+  int end = (int) ((warp+1)*(long)numTiles/totalWarps);
+  while (pos < end) {
+#ifdef USE_CUTOFF
+    // y-atom block of the tile
+    // atoms in x-atom block (y <= x) are retrieved from interactingAtoms[] below 
+    uint y = tiles[pos];
+#else
+    // find x and y coordinates of the tile such that y <= x
+    int y = (int) floor(NUM_BLOCKS+0.5f-SQRT((NUM_BLOCKS+0.5f)*(NUM_BLOCKS+0.5f)-2*pos));
+    int x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
+    if (x < y || x >= NUM_BLOCKS) { // Occasionally happens due to roundoff error.
+      y += (x < y ? -1 : 1);
+      x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
+    }
+#endif    
+    uint atom1 = y*TILE_SIZE + tgx;
 
-	unsigned int atom1 = y*TILE_SIZE + tgx;
-	int atom1_tree_ptr = ovAtomTreePointer[atom1];
+    int atom1_tree_ptr = ovAtomTreePointer[atom1];
 
-	// Load atom data for this tile.
-	real4 posq1 = posq[atom1];
-	real a1 = global_gaussian_exponent[atom1];
-	real v1 = global_gaussian_volume[atom1];
+    // Load atom data for this tile.
+    real4 posq1 = posq[atom1];
+    real a1 = global_gaussian_exponent[atom1];
+    real v1 = global_gaussian_volume[atom1];
 
-	unsigned int j = x*TILE_SIZE + tgx;
-	localData[localAtomIndex].posq = posq[j];
-	localData[localAtomIndex].g.w = global_gaussian_exponent[j];
-	localData[localAtomIndex].v = global_gaussian_volume[j];
+#ifdef USE_CUTOFF
+    uint j = interactingAtoms[pos*TILE_SIZE + tgx];
+    atomIndices[get_local_id(0)] = j;
+    if(j<PADDED_NUM_ATOMS){
+      localData[localAtomIndex].posq = posq[j];
+      localData[localAtomIndex].g.w = global_gaussian_exponent[j];
+      localData[localAtomIndex].v = global_gaussian_volume[j];
+    }
+#else
+    uint j = x*TILE_SIZE + tgx;
+    localData[localAtomIndex].posq = posq[j];
+    localData[localAtomIndex].g.w = global_gaussian_exponent[j];
+    localData[localAtomIndex].v = global_gaussian_volume[j];
+#endif
+    
+    SYNC_WARPS;
 
-	SYNC_WARPS;
+    unsigned int tj = tgx;
+    for (j = 0; j < TILE_SIZE; j++) {
 
-	unsigned int tj = tgx;
-	for (j = 0; j < TILE_SIZE; j++) {
+      int localAtom2Index = tbx+tj;
+      real4 posq2 = localData[localAtom2Index].posq;
+      real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
+      real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
+      real a2 = localData[localAtom2Index].g.w;
+      real v2 = localData[localAtom2Index].v;
+#ifdef USE_CUTOFF
+      int atom2 = atomIndices[localAtom2Index];
+#else
+      int atom2 = x*TILE_SIZE + tj;
+#endif
+      bool compute = atom1 < NUM_ATOMS_TREE && atom2 < NUM_ATOMS_TREE;
+#ifdef USE_CUTOFF
+      compute = compute && r2 < CUTOFF_SQUARED;
+#else
+      //when not using a neighbor list we are getting diagonal tiles here
+      if(x == y) compute = compute && atom1 < atom2;
+#endif
+      if (compute){
+	COMPUTE_INTERACTION_COUNT
+      }
+      tj = (tj + 1) & (TILE_SIZE - 1);
+      SYNC_WARPS;
+    }
 
-	  int localAtom2Index = tbx+tj;
-	  real4 posq2 = localData[localAtom2Index].posq;
-	  real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
-	  real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
-	  real a2 = localData[localAtom2Index].g.w;
-	  real v2 = localData[localAtom2Index].v;
-	  int atom2 = x*TILE_SIZE+tj;
+    SYNC_WARPS;
+    pos++;
+  }       
 
-	  if (atom1 < NUM_ATOMS_TREE && atom2 < NUM_ATOMS_TREE && atom1 < atom2) {
-	    COMPUTE_INTERACTION_COUNT
-          }
-	  tj = (tj + 1) & (TILE_SIZE - 1);
-	  SYNC_WARPS;
-	}
-	SYNC_WARPS;
-	pos++;
-    }       
 }
 
 // version of InitOverlapTreeCount optimized for CPU devices
@@ -290,8 +392,7 @@ __kernel void InitOverlapTree(
     __global const real* restrict global_gaussian_volume, //atomic Gaussian volume
     __global const real* restrict global_atomic_gamma, //atomic gammas
 #ifdef USE_CUTOFF
-    __global const int* restrict tiles, __global const unsigned int* restrict interactionCount, 
-    unsigned int maxTiles,
+        __global const int* restrict tiles, __global const unsigned int* restrict interactionCount, __global const int* restrict interactingAtoms, unsigned int maxTiles, __global const ushort2* exclusionTiles,
 #else
     unsigned int numTiles,
 #endif
@@ -308,66 +409,166 @@ __kernel void InitOverlapTree(
     __global       int*  restrict ovChildrenCount,
     __global       int*  restrict ovChildrenCountTop,
     __global       int*  restrict ovChildrenCountBottom
-    ){
-    const unsigned int totalWarps = get_global_size(0)/TILE_SIZE;
-    const unsigned int warp = get_global_id(0)/TILE_SIZE;
-    const unsigned int tgx = get_local_id(0) & (TILE_SIZE-1); //warp id in group
-    const unsigned int tbx = get_local_id(0) - tgx;           //id in warp
-    __local AtomData localData[FORCE_WORK_GROUP_SIZE];
-    const unsigned int localAtomIndex = get_local_id(0);
+){
+  const unsigned int totalWarps = get_global_size(0)/TILE_SIZE;
+  const unsigned int warp = get_global_id(0)/TILE_SIZE;
+  const unsigned int tgx = get_local_id(0) & (TILE_SIZE-1); //warp id in group
+  const unsigned int tbx = get_local_id(0) - tgx;           //id in warp
+  __local AtomData localData[FORCE_WORK_GROUP_SIZE];
+  __local int atomIndices[FORCE_WORK_GROUP_SIZE];
+  const unsigned int localAtomIndex = get_local_id(0);
 
-    INIT_VARS
+  INIT_VARS
 
 #ifdef USE_CUTOFF
-    unsigned int numTiles = interactionCount[0];
-    int pos = (int) (warp*(numTiles > maxTiles ? NUM_BLOCKS*((long)NUM_BLOCKS+1)/2 : (long)numTiles)/totalWarps);
-    int end = (int) ((warp+1)*(numTiles > maxTiles ? NUM_BLOCKS*((long)NUM_BLOCKS+1)/2 : (long)numTiles)/totalWarps);
-#else
-    int pos = (int) (warp*(long)numTiles/totalWarps);
-    int end = (int) ((warp+1)*(long)numTiles/totalWarps);
+  //OpenMM's neighbor list stores tiles with exclusions separately from other tiles
+      
+  // First loop: process tiles that contain exclusions
+  // (this is imposed by OpenMM's neighbor list format, AGBNP does not actually have exclusions)
+  const unsigned int firstExclusionTile = FIRST_EXCLUSION_TILE+warp*(LAST_EXCLUSION_TILE-FIRST_EXCLUSION_TILE)/totalWarps;
+  const unsigned int lastExclusionTile = FIRST_EXCLUSION_TILE+(warp+1)*(LAST_EXCLUSION_TILE-FIRST_EXCLUSION_TILE)/totalWarps;
+  for (int pos = firstExclusionTile; pos < lastExclusionTile; pos++) {
+    const ushort2 tileIndices = exclusionTiles[pos];
+    uint x = tileIndices.x;
+    uint y = tileIndices.y;
+       
+    uint atom1 = y*TILE_SIZE + tgx;
+    int atom1_tree_ptr = ovAtomTreePointer[atom1];
+    int atom1_children_start = ovChildrenStartIndex[atom1_tree_ptr];
+    
+    // Load atom data for this tile.
+    real4 posq1 = posq[atom1];
+    LOAD_ATOM1_PARAMETERS
+      
+    unsigned int j = x*TILE_SIZE + tgx;
+    localData[localAtomIndex].posq = posq[j];
+    LOAD_LOCAL_PARAMETERS_FROM_GLOBAL
+      
+    SYNC_WARPS;
+
+    if(y==x){//diagonal tile
+    
+      unsigned int tj = tgx;
+      for (j = 0; j < TILE_SIZE; j++) {
+       
+	int localAtom2Index = tbx+tj;
+	real4 posq2 = localData[localAtom2Index].posq;
+	real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
+	real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
+	LOAD_ATOM2_PARAMETERS
+	  int atom2 = x*TILE_SIZE+tj;
+	
+	if (atom1 < NUM_ATOMS_TREE && atom2 < NUM_ATOMS_TREE && atom1 < atom2 && r2 < CUTOFF_SQUARED) {
+	  COMPUTE_INTERACTION_STORE1
+	    }
+	tj = (tj + 1) & (TILE_SIZE - 1);
+	SYNC_WARPS;
+      }
+
+   }else{
+
+      unsigned int tj = tgx;
+      for (j = 0; j < TILE_SIZE; j++) {
+       
+	int localAtom2Index = tbx+tj;
+	real4 posq2 = localData[localAtom2Index].posq;
+	real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
+	real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
+	LOAD_ATOM2_PARAMETERS
+	  int atom2 = x*TILE_SIZE+tj;
+	
+	if (atom1 < NUM_ATOMS_TREE && atom2 < NUM_ATOMS_TREE && r2 < CUTOFF_SQUARED) {
+	  COMPUTE_INTERACTION_STORE1
+	    }
+	tj = (tj + 1) & (TILE_SIZE - 1);
+	SYNC_WARPS;
+      }
+
+    }
+
+    SYNC_WARPS;
+    pos++;
+  }
+#endif //USE_CUTOFF
+    
+
+  //second loop, tiles without exclusions or all interactions if not using cutoffs
+#ifdef USE_CUTOFF
+  unsigned int numTiles = interactionCount[0];
+  if(numTiles > maxTiles)
+    return; // There wasn't enough memory for the neighbor list.
 #endif
-    while (pos < end) {
-        // Extract the coordinates of this tile.
-	int y = (int) floor(NUM_BLOCKS+0.5f-SQRT((NUM_BLOCKS+0.5f)*(NUM_BLOCKS+0.5f)-2*pos));
-        int x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
-	if (x < y || x >= NUM_BLOCKS) { // Occasionally happens due to roundoff error.
-	  y += (x < y ? -1 : 1);
-	  x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
-	}
+  int pos = (int) (warp*(long)numTiles/totalWarps);
+  int end = (int) ((warp+1)*(long)numTiles/totalWarps);
+  while (pos < end) {
+#ifdef USE_CUTOFF
+    // y-atom block of the tile
+    // atoms in x-atom block (y <= x) are retrieved from interactingAtoms[] below 
+    uint y = tiles[pos];
+#else
+    // find x and y coordinates of the tile such that y <= x
+    int y = (int) floor(NUM_BLOCKS+0.5f-SQRT((NUM_BLOCKS+0.5f)*(NUM_BLOCKS+0.5f)-2*pos));
+    int x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
+    if (x < y || x >= NUM_BLOCKS) { // Occasionally happens due to roundoff error.
+      y += (x < y ? -1 : 1);
+      x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
+    }
+#endif    
+    uint atom1 = y*TILE_SIZE + tgx;
+    int atom1_tree_ptr = ovAtomTreePointer[atom1];
+    int atom1_children_start = ovChildrenStartIndex[atom1_tree_ptr];
 
-	unsigned int atom1 = y*TILE_SIZE + tgx;
-	int atom1_tree_ptr = ovAtomTreePointer[atom1];
-	int atom1_children_start = ovChildrenStartIndex[atom1_tree_ptr];
+    // Load atom data for this tile.
+    real4 posq1 = posq[atom1];
+    LOAD_ATOM1_PARAMETERS
 
-	// Load atom data for this tile.
-	real4 posq1 = posq[atom1];
-	LOAD_ATOM1_PARAMETERS
-
-	unsigned int j = x*TILE_SIZE + tgx;
+#ifdef USE_CUTOFF
+    uint j = interactingAtoms[pos*TILE_SIZE + tgx];
+    atomIndices[get_local_id(0)] = j;
+    if(j<PADDED_NUM_ATOMS){
 	localData[localAtomIndex].posq = posq[j];
 	LOAD_LOCAL_PARAMETERS_FROM_GLOBAL
+    }
+#else
+    uint j = x*TILE_SIZE + tgx;
+    localData[localAtomIndex].posq = posq[j];
+    LOAD_LOCAL_PARAMETERS_FROM_GLOBAL
+#endif
+    localData[localAtomIndex].ov_count = 0;
+    
+    SYNC_WARPS;
 
-	SYNC_WARPS;
+    unsigned int tj = tgx;
+    for (j = 0; j < TILE_SIZE; j++) {
 
-	unsigned int tj = tgx;
-	for (j = 0; j < TILE_SIZE; j++) {
-
-	  int localAtom2Index = tbx+tj;
-	  real4 posq2 = localData[localAtom2Index].posq;
-	  real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
-	  real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
-	  LOAD_ATOM2_PARAMETERS
-	  int atom2 = x*TILE_SIZE+tj;
-
-	  if (atom1 < NUM_ATOMS_TREE && atom2 < NUM_ATOMS_TREE && atom1 < atom2) {
-            COMPUTE_INTERACTION_STORE1
-          }
-	  tj = (tj + 1) & (TILE_SIZE - 1);
-	  SYNC_WARPS;
-	}
-	SYNC_WARPS;
-	pos++;
-    }       
+      int localAtom2Index = tbx+tj;
+      real4 posq2 = localData[localAtom2Index].posq;
+      real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
+      real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
+      LOAD_ATOM2_PARAMETERS
+#ifdef USE_CUTOFF
+      int atom2 = atomIndices[localAtom2Index];
+#else
+      int atom2 = x*TILE_SIZE + tj;
+#endif
+      bool compute = atom1 < NUM_ATOMS_TREE && atom2 < NUM_ATOMS_TREE;
+#ifdef USE_CUTOFF
+      compute = compute && r2 < CUTOFF_SQUARED;
+#else
+      //when not using a neighbor list we are getting diagonal tiles here
+      if(x == y) compute = compute && atom1 < atom2;
+#endif
+      if (compute){
+	COMPUTE_INTERACTION_STORE1
+       }
+      tj = (tj + 1) & (TILE_SIZE - 1);
+      SYNC_WARPS;
+    }
+    
+    SYNC_WARPS;
+    pos++;
+  }
+  
 }
 
 

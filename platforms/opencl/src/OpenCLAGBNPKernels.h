@@ -90,6 +90,7 @@ private:
     bool usePeriodic;
     bool useExclusions;
     double cutoffDistance;
+    int maxTiles;
     bool hasInitializedKernel;
     bool hasCreatedKernels;
     OpenMM::OpenCLContext& cl;
@@ -179,9 +180,16 @@ private:
     cl::Kernel resetSelfVolumesKernel;
     cl::Kernel InitOverlapTreeKernel_1body_1;
     cl::Kernel InitOverlapTreeKernel_1body_2;
+
     cl::Kernel InitOverlapTreeCountKernel;
+    int InitOverlapTreeCountKernel_first_nbarg;
+
+    
     cl::Kernel reduceovCountBufferKernel;
+    
     cl::Kernel InitOverlapTreeKernel;
+    int InitOverlapTreeKernel_first_nbarg;
+
     cl::Kernel ComputeOverlapTreeKernel;
     cl::Kernel ComputeOverlapTree_1passKernel;
     cl::Kernel computeSelfVolumesKernel;
@@ -231,14 +239,23 @@ private:
     cl::Kernel testHashKernel;
     cl::Kernel testLookupKernel;
     cl::Kernel initBornRadiiKernel;
+
     cl::Kernel inverseBornRadiiKernel;
+    int inverseBornRadiiKernel_first_nbarg;
+
     cl::Kernel reduceBornRadiiKernel;
     cl::Kernel VdWEnergyKernel;
     cl::Kernel initVdWGBDerBornKernel;
+
     cl::Kernel VdWGBDerBornKernel;
+    int VdWGBDerBornKernel_first_nbarg;
+    
     cl::Kernel reduceVdWGBDerBornKernel;
     cl::Kernel initGBEnergyKernel;
+    
     cl::Kernel GBPairEnergyKernel;
+    int GBPairEnergyKernel_first_nbarg;
+    
     cl::Kernel reduceGBEnergyKernel;
 
 

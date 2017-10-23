@@ -236,7 +236,7 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool i
 	if(d < AGBNP_I4LOOKUP_MAXA){
 	  int rad_typei = i4_lut->radius_type_screened[i];
 	  int rad_typej = i4_lut->radius_type_screener[j];
-	  inverse_born_radius[i] -= pifac*volume_scaling_factor[j]*i4_lut->eval(d, rad_typei, rad_typej); 
+	  inverse_born_radius[i] -= pifac*volume_scaling_factor[j]*i4_lut->eval(d, rad_typei, rad_typej);
 	}	
       }
       RealOpenMM fp;

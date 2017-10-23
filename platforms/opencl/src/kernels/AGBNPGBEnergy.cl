@@ -62,8 +62,9 @@ __kernel void GBPairEnergy(
 
 			       //neighbor list information
 #ifdef USE_CUTOFF
-			       __global const int* restrict tiles, __global const unsigned int* restrict interactionCount, 
+			       __global const int* restrict tiles, __global const unsigned int* restrict interactionCount, __global const int* restrict interactingAtoms,
 			       unsigned int maxTiles,
+			       __global const ushort2* exclusionTiles,
 #else
 			       unsigned int numTiles,
 #endif
@@ -93,24 +94,20 @@ __kernel void GBPairEnergy(
   real dielectric_factor = AGBNP_DIELECTRIC_FACTOR;
   real pt25 = 0.25;
 
+
 #ifdef USE_CUTOFF
-  unsigned int numTiles = interactionCount[0];
-  int pos = (int) (warp*(numTiles > maxTiles ? NUM_BLOCKS*((long)NUM_BLOCKS+1)/2 : (long)numTiles)/totalWarps);
-  int end = (int) ((warp+1)*(numTiles > maxTiles ? NUM_BLOCKS*((long)NUM_BLOCKS+1)/2 : (long)numTiles)/totalWarps);
-#else
-  int pos = (int) (warp*(long)numTiles/totalWarps);
-  int end = (int) ((warp+1)*(long)numTiles/totalWarps);
-#endif
-  while (pos < end) {
-    // Extract the coordinates of this tile.
-    int y = (int) floor(NUM_BLOCKS+0.5f-SQRT((NUM_BLOCKS+0.5f)*(NUM_BLOCKS+0.5f)-2*pos));
-    int x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
-    if (x < y || x >= NUM_BLOCKS) { // Occasionally happens due to roundoff error.
-      y += (x < y ? -1 : 1);
-      x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
-    }
-    
-    unsigned int atom1 = y*TILE_SIZE + tgx;
+  //OpenMM's neighbor list stores tiles with exclusions separately from other tiles
+  
+  // First loop: process tiles that contain exclusions
+  // (this is imposed by OpenMM's neighbor list format, AGBNP does not actually have exclusions)
+  const unsigned int firstExclusionTile = FIRST_EXCLUSION_TILE+warp*(LAST_EXCLUSION_TILE-FIRST_EXCLUSION_TILE)/totalWarps;
+  const unsigned int lastExclusionTile = FIRST_EXCLUSION_TILE+(warp+1)*(LAST_EXCLUSION_TILE-FIRST_EXCLUSION_TILE)/totalWarps;
+  for (int pos = firstExclusionTile; pos < lastExclusionTile; pos++) {
+    const ushort2 tileIndices = exclusionTiles[pos];
+    uint x = tileIndices.x;
+    uint y = tileIndices.y;
+       
+    uint atom1 = y*TILE_SIZE + tgx;
     
     // Load atom data for this tile.
     real4 posq1 = posq[atom1];
@@ -128,6 +125,171 @@ __kernel void GBPairEnergy(
     localData[localAtomIndex].gbdery = 0;
     
     SYNC_WARPS;
+
+    if(y==x){//diagonal tile, need to check for atom1<atom2
+
+      unsigned int tj = tgx;
+      for (j = 0; j < TILE_SIZE; j++) {
+	
+	int localAtom2Index = tbx+tj;
+	real4 posq2 = localData[localAtom2Index].posq;
+	real charge2 = posq2.w;
+	real bornr2 = localData[localAtom2Index].bornr;
+	real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
+	real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
+	real4 force2 = 0;
+	real gbdery2 = 0;
+	
+	int atom2 = x*TILE_SIZE+tj;
+	
+	if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS && atom1 < atom2 && r2 < CUTOFF_SQUARED && atom1 != atom2) {
+	  
+	  real qqf = charge1*charge2;
+	  real qq = dielectric_factor*qqf;
+	  real bb = bornr1*bornr2;
+	  real etij = exp(-pt25*r2/bb);
+	  real fgb = rsqrt(r2 + bb*etij);
+	  egb1 += 2.*qq*fgb;
+	  real fgb3 = fgb*fgb*fgb;
+	  real mw = -2.0*qq*(1.0-pt25*etij)*fgb3;
+	  real4 g = delta * mw;
+	  force1 += g;
+	  force2 -= g;
+	  real ytij = qqf*(bb+pt25*r2)*etij*fgb3;
+	  gbdery1 += ytij;
+	  gbdery2 += ytij;
+	}
+	
+	localData[localAtom2Index].force += force2;
+	localData[localAtom2Index].gbdery += gbdery2;
+	
+	tj = (tj + 1) & (TILE_SIZE - 1);
+	SYNC_WARPS;
+      }
+
+    }else{//off-diagonal tile: atom1 and atom2 do not have to be in any particular order
+
+      unsigned int tj = tgx;
+      for (j = 0; j < TILE_SIZE; j++) {
+	
+	int localAtom2Index = tbx+tj;
+	real4 posq2 = localData[localAtom2Index].posq;
+	real charge2 = posq2.w;
+	real bornr2 = localData[localAtom2Index].bornr;
+	real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
+	real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
+	real4 force2 = 0;
+	real gbdery2 = 0;
+	
+	int atom2 = x*TILE_SIZE+tj;
+	
+	if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS && r2 < CUTOFF_SQUARED) {
+	  
+	  real qqf = charge1*charge2;
+	  real qq = dielectric_factor*qqf;
+	  real bb = bornr1*bornr2;
+	  real etij = exp(-pt25*r2/bb);
+	  real fgb = rsqrt(r2 + bb*etij);
+	  egb1 += 2.*qq*fgb;
+	  real fgb3 = fgb*fgb*fgb;
+	  real mw = -2.0*qq*(1.0-pt25*etij)*fgb3;
+	  real4 g = delta * mw;
+	  force1 += g;
+	  force2 -= g;
+	  real ytij = qqf*(bb+pt25*r2)*etij*fgb3;
+	  gbdery1 += ytij;
+	  gbdery2 += ytij;
+	}
+	
+	localData[localAtom2Index].force += force2;
+	localData[localAtom2Index].gbdery += gbdery2;
+	
+	tj = (tj + 1) & (TILE_SIZE - 1);
+	SYNC_WARPS;
+      }
+
+    }
+    SYNC_WARPS;
+
+    //update force, energy, etc. buffers for this tile
+    unsigned int atom2 = x*TILE_SIZE + tgx;
+#ifdef SUPPORTS_64_BIT_ATOMICS
+    atom_add(&GBEnergyBuffer_long[atom1], (long) (egb1*0x100000000));
+    atom_add(&GBDerYBuffer_long[atom1], (long) (gbdery1*0x100000000));
+    atom_add(&forceBuffers[atom1], (long) (force1.x*0x100000000));
+    atom_add(&forceBuffers[atom1+PADDED_NUM_ATOMS], (long) (force1.y*0x100000000));
+    atom_add(&forceBuffers[atom1+2*PADDED_NUM_ATOMS], (long) (force1.z*0x100000000));
+    if(atom2 < PADDED_NUM_ATOMS) {
+       atom_add(&GBDerYBuffer_long[atom2], (long) (localData[get_local_id(0)].gbdery*0x100000000));
+       atom_add(&forceBuffers[atom2], (long) (localData[get_local_id(0)].force.x*0x100000000));
+       atom_add(&forceBuffers[atom2+PADDED_NUM_ATOMS], (long) (localData[get_local_id(0)].force.y*0x100000000));
+       atom_add(&forceBuffers[atom2+2*PADDED_NUM_ATOMS], (long) (localData[get_local_id(0)].force.z*0x100000000));
+    }
+#else
+    unsigned int offset1 = atom1 + warp*PADDED_NUM_ATOMS;
+    unsigned int offset2 = atom2 + warp*PADDED_NUM_ATOMS;
+    GBEnergyBuffer[offset1] += egb1;
+    GBDerYBuffer[offset1] += gbdery1;
+    forceBuffers[offset1] += force1;
+    if(atom2 < PADDED_NUM_ATOMS) {
+      GBDerYBuffer[offset2] += localData[get_local_id(0)].gbdery;
+      forceBuffers[offset2] += localData[get_local_id(0)].force;
+    }
+#endif
+  }
+#endif //USE_CUTOFF
+
+
+  //second loop, tiles without exclusions or all interactions if not using cutoffs
+#ifdef USE_CUTOFF
+  __local int atomIndices[FORCE_WORK_GROUP_SIZE];
+  unsigned int numTiles = interactionCount[0];
+  if(numTiles > maxTiles)
+    return; // There wasn't enough memory for the neighbor list.
+#endif
+  int pos = (int) (warp*(long)numTiles/totalWarps);
+  int end = (int) ((warp+1)*(long)numTiles/totalWarps);
+  while (pos < end) {
+#ifdef USE_CUTOFF
+    // y-atom block of the tile
+    // atoms in x-atom block (y <= x) are retrieved from interactingAtoms[] below 
+    uint y = tiles[pos];
+#else
+    // find x and y coordinates of the tile such that y <= x
+    int y = (int) floor(NUM_BLOCKS+0.5f-SQRT((NUM_BLOCKS+0.5f)*(NUM_BLOCKS+0.5f)-2*pos));
+    int x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
+    if (x < y || x >= NUM_BLOCKS) { // Occasionally happens due to roundoff error.
+      y += (x < y ? -1 : 1);
+      x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
+    }
+#endif    
+    uint atom1 = y*TILE_SIZE + tgx;
+
+    // Load atom data for this tile.
+    real4 posq1 = posq[atom1];
+    real charge1 = chargeParam[atom1];
+    real bornr1 = BornRadius[atom1]; 
+    real egb1 = 0;
+    real4 force1 = 0;
+    real gbdery1 = 0;
+    
+#ifdef USE_CUTOFF
+    uint j = interactingAtoms[pos*TILE_SIZE + tgx];
+    atomIndices[get_local_id(0)] = j;
+    if(j<PADDED_NUM_ATOMS){
+      localData[localAtomIndex].posq = posq[j];
+      localData[localAtomIndex].posq.w = chargeParam[j];
+      localData[localAtomIndex].bornr = BornRadius[j];
+    }
+#else
+    unsigned int j = x*TILE_SIZE + tgx;
+    localData[localAtomIndex].posq = posq[j];
+    localData[localAtomIndex].posq.w = chargeParam[j];
+    localData[localAtomIndex].bornr = BornRadius[j];
+#endif
+    localData[localAtomIndex].force = 0;
+    localData[localAtomIndex].gbdery = 0;
+    SYNC_WARPS;
     
     unsigned int tj = tgx;
     for (j = 0; j < TILE_SIZE; j++) {
@@ -140,10 +302,20 @@ __kernel void GBPairEnergy(
       real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
       real4 force2 = 0;
       real gbdery2 = 0;
-      
+
+#ifdef USE_CUTOFF
+      int atom2 = atomIndices[localAtom2Index];
+#else
       int atom2 = x*TILE_SIZE+tj;
-      
-      if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS && atom1 < atom2) {
+#endif
+      bool compute = atom1 < NUM_ATOMS && atom2 < NUM_ATOMS;
+#ifdef USE_CUTOFF
+      compute = compute && r2 < CUTOFF_SQUARED;
+#else
+      //when not using a neighbor list we are getting diagonal tiles here
+      if(x == y) compute = compute && atom1 < atom2;
+#endif
+      if (compute) {
 
 	real qqf = charge1*charge2;
 	real qq = dielectric_factor*qqf;
@@ -170,7 +342,11 @@ __kernel void GBPairEnergy(
     SYNC_WARPS;
     
     //update force, energy, etc. buffers for this tile
-    unsigned int atom2 = x*TILE_SIZE + tgx;
+#ifdef USE_CUTOFF
+   uint atom2 = atomIndices[get_local_id(0)];
+#else
+   uint atom2 = x*TILE_SIZE + tgx;
+#endif
 #ifdef SUPPORTS_64_BIT_ATOMICS
     atom_add(&GBEnergyBuffer_long[atom1], (long) (egb1*0x100000000));
     atom_add(&GBDerYBuffer_long[atom1], (long) (gbdery1*0x100000000));

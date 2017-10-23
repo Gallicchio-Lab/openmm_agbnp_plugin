@@ -185,8 +185,9 @@ __kernel void inverseBornRadii(
 
 			       //neighbor list information
 #ifdef USE_CUTOFF
-			       __global const int* restrict tiles, __global const unsigned int* restrict interactionCount, 
+			       __global const int* restrict tiles, __global const unsigned int* restrict interactionCount, __global const int* restrict interactingAtoms,
 			       unsigned int maxTiles,
+			       __global const ushort2* exclusionTiles,
 #else
 			       unsigned int numTiles,
 #endif
@@ -209,29 +210,24 @@ __kernel void inverseBornRadii(
 
   const unsigned int totalWarps = get_global_size(0)/TILE_SIZE;
   const unsigned int warp = get_global_id(0)/TILE_SIZE;
-  const unsigned int tgx = get_local_id(0) & (TILE_SIZE-1); //warp id in group
-  const unsigned int tbx = get_local_id(0) - tgx;           //id in warp
+  const unsigned int tgx = get_local_id(0) & (TILE_SIZE-1); //id in warp
+  const unsigned int tbx = get_local_id(0) - tgx;           //start of warp
   const unsigned int localAtomIndex = get_local_id(0);
   __local AtomData localData[FORCE_WORK_GROUP_SIZE];
   
 #ifdef USE_CUTOFF
-  unsigned int numTiles = interactionCount[0];
-  int pos = (int) (warp*(numTiles > maxTiles ? NUM_BLOCKS*((long)NUM_BLOCKS+1)/2 : (long)numTiles)/totalWarps);
-  int end = (int) ((warp+1)*(numTiles > maxTiles ? NUM_BLOCKS*((long)NUM_BLOCKS+1)/2 : (long)numTiles)/totalWarps);
-#else
-  int pos = (int) (warp*(long)numTiles/totalWarps);
-  int end = (int) ((warp+1)*(long)numTiles/totalWarps);
-#endif
-  while (pos < end) {
-    // Extract the coordinates of this tile.
-    int y = (int) floor(NUM_BLOCKS+0.5f-SQRT((NUM_BLOCKS+0.5f)*(NUM_BLOCKS+0.5f)-2*pos));
-    int x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
-    if (x < y || x >= NUM_BLOCKS) { // Occasionally happens due to roundoff error.
-      y += (x < y ? -1 : 1);
-      x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
-    }
-    
-    unsigned int atom1 = y*TILE_SIZE + tgx;
+  //OpenMM's neighbor list stores tiles with exclusions separately from other tiles
+  
+  // First loop: process tiles that contain exclusions
+  // (this is imposed by OpenMM's neighbor list format, AGBNP does not actually have exclusions)
+  const unsigned int firstExclusionTile = FIRST_EXCLUSION_TILE+warp*(LAST_EXCLUSION_TILE-FIRST_EXCLUSION_TILE)/totalWarps;
+  const unsigned int lastExclusionTile = FIRST_EXCLUSION_TILE+(warp+1)*(LAST_EXCLUSION_TILE-FIRST_EXCLUSION_TILE)/totalWarps;
+  for (int pos = firstExclusionTile; pos < lastExclusionTile; pos++) {
+    const ushort2 tileIndices = exclusionTiles[pos];
+    uint x = tileIndices.x;
+    uint y = tileIndices.y;
+       
+    uint atom1 = y*TILE_SIZE + tgx;
     
     // Load atom data for this tile.
     real4 posq1 = posq[atom1];
@@ -241,12 +237,172 @@ __kernel void inverseBornRadii(
     int radtypej1 = radtypeScreener[atom1];
     real invbr1 = 0;
     
-    unsigned int j = x*TILE_SIZE + tgx;
+    uint j = x*TILE_SIZE + tgx;
+
     localData[localAtomIndex].posq = posq[j];
     localData[localAtomIndex].scaling_factor = volScalingFactor[j];
     localData[localAtomIndex].isheavy = ishydrogenParam[j] > 0 ? 0 : 1;
     localData[localAtomIndex].radtypei = radtypeScreened[j];
     localData[localAtomIndex].radtypej = radtypeScreener[j];
+    localData[localAtomIndex].invbr = 0;
+
+    SYNC_WARPS;
+
+    if(y==x){//diagonal tile
+
+      unsigned int tj = tgx;
+      for (j = 0; j < TILE_SIZE; j++) {
+	
+	int localAtom2Index = tbx+tj;
+	real4 posq2 = localData[localAtom2Index].posq;
+	real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
+	real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
+	real r = sqrt(r2);
+	real scaling_factor2 = localData[localAtom2Index].scaling_factor;
+	bool isheavy2 = localData[localAtom2Index].isheavy;
+	int radtypei2 = localData[localAtom2Index].radtypei;
+	int radtypej2 = localData[localAtom2Index].radtypej;
+	real invbr2 = 0;
+
+	int atom2 = x*TILE_SIZE + tj;
+	if(atom1 < NUM_ATOMS && atom2 < NUM_ATOMS && r2 < CUTOFF_SQUARED && atom1 != atom2){
+	  //diagonal tile: atom2 descreens atom1 since both
+	  //  (atom1,atom2) and (atom2,atom1) pairs are processed
+
+	  if(isheavy2) {
+	    // atom2 descreens atom1
+	    int table_id = radtypei1 * ntypes_screener + radtypej2;
+	    int table_offset = table_size * table_id;
+	    real2 res = lookup_table(r,
+				     table_size, rmin, rmax,
+				     &(hy[table_offset]), &(hy2[table_offset]));
+	    invbr1 += scaling_factor2*res.x;
+	  }
+	}
+	localData[localAtom2Index].invbr += invbr2;
+      
+	tj = (tj + 1) & (TILE_SIZE - 1);
+	SYNC_WARPS;
+      }
+      
+    }else{//off-diagonal tile
+    
+      unsigned int tj = tgx;
+      for (j = 0; j < TILE_SIZE; j++) {
+	
+	int localAtom2Index = tbx+tj;
+	real4 posq2 = localData[localAtom2Index].posq;
+	real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
+	real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
+	real r = sqrt(r2);
+	real scaling_factor2 = localData[localAtom2Index].scaling_factor;
+	bool isheavy2 = localData[localAtom2Index].isheavy;
+	int radtypei2 = localData[localAtom2Index].radtypei;
+	int radtypej2 = localData[localAtom2Index].radtypej;
+	real invbr2 = 0;
+
+	int atom2 = x*TILE_SIZE + tj;
+	if(atom1 < NUM_ATOMS && atom2 < NUM_ATOMS && r2 < CUTOFF_SQUARED){
+	  //off-diagonal tile: atom2 and atom1 descreen each other
+	  //since only one of the pairs (atom1,atom2) and (atom2,atom1)
+	  //is processed
+
+	  if(isheavy2) {
+	    // atom2 descreens atom1
+	    int table_id = radtypei1 * ntypes_screener + radtypej2;
+	    int table_offset = table_size * table_id;
+	    real2 res = lookup_table(r,
+				     table_size, rmin, rmax,
+				     &(hy[table_offset]), &(hy2[table_offset]));
+	    invbr1 += scaling_factor2*res.x;
+	  }
+	  if(isheavy1){
+	    // atom1 descreens atom2
+	    int table_id = radtypei2 * ntypes_screener + radtypej1;
+	    int table_offset = table_size * table_id;
+	    real2 res = lookup_table(r,
+				     table_size, rmin, rmax,
+				     &(hy[table_offset]), &(hy2[table_offset]));
+	    invbr2 += scaling_factor1*res.x;
+	  }
+	}
+	localData[localAtom2Index].invbr += invbr2;
+      
+	tj = (tj + 1) & (TILE_SIZE - 1);
+	SYNC_WARPS;
+      }
+
+    } //diagonal tile test
+    SYNC_WARPS;
+    
+    //update inverse Born radii buffers
+    uint atom2 = x*TILE_SIZE + tgx;
+#ifdef SUPPORTS_64_BIT_ATOMICS
+    atom_add(&invBornRadiusBuffer_long[atom1], (long) (invbr1*0x100000000));
+    if (atom2 < PADDED_NUM_ATOMS) {
+      atom_add(&invBornRadiusBuffer_long[atom2], (long) (localData[get_local_id(0)].invbr*0x100000000));
+    }
+#else
+    unsigned int offset1 = atom1 + warp*PADDED_NUM_ATOMS;
+    unsigned int offset2 = atom2 + warp*PADDED_NUM_ATOMS;
+    invBornRadiusBuffer[offset1] += invbr1;
+    if (atom2 < PADDED_NUM_ATOMS)
+      invBornRadiusBuffer[offset2] += localData[get_local_id(0)].invbr; 
+#endif    
+  }
+#endif //USE_CUTOFF
+
+  //second loop, tiles without exclusions or all interactions if not using cutoffs
+#ifdef USE_CUTOFF
+  __local int atomIndices[FORCE_WORK_GROUP_SIZE];
+  unsigned int numTiles = interactionCount[0];
+  if(numTiles > maxTiles)
+    return; // There wasn't enough memory for the neighbor list.
+#endif
+  int pos = (int) (warp*(long)numTiles/totalWarps);
+  int end = (int) ((warp+1)*(long)numTiles/totalWarps);
+  while (pos < end) {
+#ifdef USE_CUTOFF
+    // y-atom block of the tile
+    // atoms in x-atom block (y <= x) are retrieved from interactingAtoms[] below 
+    uint y = tiles[pos];
+#else
+    // find x and y coordinates of the tile such that y <= x
+    int y = (int) floor(NUM_BLOCKS+0.5f-SQRT((NUM_BLOCKS+0.5f)*(NUM_BLOCKS+0.5f)-2*pos));
+    int x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
+    if (x < y || x >= NUM_BLOCKS) { // Occasionally happens due to roundoff error.
+      y += (x < y ? -1 : 1);
+      x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
+    }
+#endif    
+    uint atom1 = y*TILE_SIZE + tgx;
+    
+    // Load atom data for this tile.
+    real4 posq1 = posq[atom1];
+    real scaling_factor1 = volScalingFactor[atom1];
+    bool isheavy1 = ishydrogenParam[atom1] > 0 ? 0 : 1;
+    int radtypei1 = radtypeScreened[atom1];
+    int radtypej1 = radtypeScreener[atom1];
+    real invbr1 = 0;
+
+#ifdef USE_CUTOFF
+    uint j = interactingAtoms[pos*TILE_SIZE + tgx];
+    atomIndices[get_local_id(0)] = j;
+    if(j<PADDED_NUM_ATOMS){
+      localData[localAtomIndex].posq = posq[j];
+      localData[localAtomIndex].scaling_factor = volScalingFactor[j];
+      localData[localAtomIndex].isheavy = ishydrogenParam[j] > 0 ? 0 : 1;
+      localData[localAtomIndex].radtypei = radtypeScreened[j];
+      localData[localAtomIndex].radtypej = radtypeScreener[j];
+    }
+#else
+    uint j = x*TILE_SIZE + tgx;
+    localData[localAtomIndex].posq = posq[j];
+    localData[localAtomIndex].scaling_factor = volScalingFactor[j];
+    localData[localAtomIndex].isheavy = ishydrogenParam[j] > 0 ? 0 : 1;
+    localData[localAtomIndex].radtypei = radtypeScreened[j];
+    localData[localAtomIndex].radtypej = radtypeScreener[j];
+#endif
     localData[localAtomIndex].invbr = 0;
     
     SYNC_WARPS;
@@ -264,18 +420,26 @@ __kernel void inverseBornRadii(
       int radtypei2 = localData[localAtom2Index].radtypei;
       int radtypej2 = localData[localAtom2Index].radtypej;
       real invbr2 = 0;
-      
-      int atom2 = x*TILE_SIZE+tj;
-      
-      if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS && atom1 < atom2) {
-	
+#ifdef USE_CUTOFF
+      int atom2 = atomIndices[localAtom2Index];
+#else
+      int atom2 = x*TILE_SIZE + tj;
+#endif
+      bool compute = atom1 < NUM_ATOMS && atom2 < NUM_ATOMS;
+#ifdef USE_CUTOFF
+      compute = compute && r2 < CUTOFF_SQUARED;
+#else
+      //when not using a neighbor list we are getting diagonal tiles here
+      if(x == y) compute = compute && atom1 < atom2;
+#endif
+      if (compute){
 	if(isheavy2) {
 	  // atom2 descreens atom1
 	  int table_id = radtypei1 * ntypes_screener + radtypej2;
 	  int table_offset = table_size * table_id;
 	  real2 res = lookup_table(r,
-				   table_size, rmin, rmax,
-				   &(hy[table_offset]), &(hy2[table_offset]));
+	  			   table_size, rmin, rmax,
+	  			   &(hy[table_offset]), &(hy2[table_offset]));
 	  invbr1 += scaling_factor2*res.x;
 	}
 	if(isheavy1){
@@ -283,13 +447,13 @@ __kernel void inverseBornRadii(
 	  int table_id = radtypei2 * ntypes_screener + radtypej1;
 	  int table_offset = table_size * table_id;
 	  real2 res = lookup_table(r,
-				   table_size, rmin, rmax,
-				   &(hy[table_offset]), &(hy2[table_offset]));
+	  			   table_size, rmin, rmax,
+	  			   &(hy[table_offset]), &(hy2[table_offset]));
 	  invbr2 += scaling_factor1*res.x;
 	}
       }
       
-      localData[localAtom2Index].invbr += invbr2;
+     localData[localAtom2Index].invbr += invbr2;
       
       
       tj = (tj + 1) & (TILE_SIZE - 1);
@@ -298,7 +462,11 @@ __kernel void inverseBornRadii(
     SYNC_WARPS;
     
     //update inverse Born radii buffers
-    unsigned int atom2 = x*TILE_SIZE + tgx;
+#ifdef USE_CUTOFF
+   uint atom2 = atomIndices[get_local_id(0)];
+#else
+   uint atom2 = x*TILE_SIZE + tgx;
+#endif
 #ifdef SUPPORTS_64_BIT_ATOMICS
     atom_add(&invBornRadiusBuffer_long[atom1], (long) (invbr1*0x100000000));
     if (atom2 < PADDED_NUM_ATOMS) {
@@ -580,8 +748,9 @@ __kernel void VdWGBDerBorn(
 
 			       //neighbor list information
 #ifdef USE_CUTOFF
-			       __global const int* restrict tiles, __global const unsigned int* restrict interactionCount, 
+			       __global const int* restrict tiles, __global const unsigned int* restrict interactionCount, __global const int* restrict interactingAtoms,
 			       unsigned int maxTiles,
+			       __global const ushort2* exclusionTiles,
 #else
 			       unsigned int numTiles,
 #endif
@@ -619,26 +788,22 @@ __kernel void VdWGBDerBorn(
   const unsigned int tbx = get_local_id(0) - tgx;           //id in warp
   const unsigned int localAtomIndex = get_local_id(0);
   __local AtomDataWU localData[FORCE_WORK_GROUP_SIZE];
-  
+
+
 #ifdef USE_CUTOFF
-  unsigned int numTiles = interactionCount[0];
-  int pos = (int) (warp*(numTiles > maxTiles ? NUM_BLOCKS*((long)NUM_BLOCKS+1)/2 : (long)numTiles)/totalWarps);
-  int end = (int) ((warp+1)*(numTiles > maxTiles ? NUM_BLOCKS*((long)NUM_BLOCKS+1)/2 : (long)numTiles)/totalWarps);
-#else
-  int pos = (int) (warp*(long)numTiles/totalWarps);
-  int end = (int) ((warp+1)*(long)numTiles/totalWarps);
-#endif
-  while (pos < end) {
-    // Extract the coordinates of this tile.
-    int y = (int) floor(NUM_BLOCKS+0.5f-SQRT((NUM_BLOCKS+0.5f)*(NUM_BLOCKS+0.5f)-2*pos));
-    int x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
-    if (x < y || x >= NUM_BLOCKS) { // Occasionally happens due to roundoff error.
-      y += (x < y ? -1 : 1);
-      x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
-    }
-    
-    unsigned int atom1 = y*TILE_SIZE + tgx;
-    
+  //OpenMM's neighbor list stores tiles with exclusions separately from other tiles
+  
+  // First loop: process tiles that contain exclusions
+  // (this is imposed by OpenMM's neighbor list format, AGBNP does not actually have exclusions)
+  const unsigned int firstExclusionTile = FIRST_EXCLUSION_TILE+warp*(LAST_EXCLUSION_TILE-FIRST_EXCLUSION_TILE)/totalWarps;
+  const unsigned int lastExclusionTile = FIRST_EXCLUSION_TILE+(warp+1)*(LAST_EXCLUSION_TILE-FIRST_EXCLUSION_TILE)/totalWarps;
+  for (int pos = firstExclusionTile; pos < lastExclusionTile; pos++) {
+    const ushort2 tileIndices = exclusionTiles[pos];
+    uint x = tileIndices.x;
+    uint y = tileIndices.y;
+       
+    uint atom1 = y*TILE_SIZE + tgx;
+
     // Load atom data for this tile.
     real4 posq1 = posq[atom1];
     real scaling_factor1 = volScalingFactor[atom1];
@@ -664,6 +829,219 @@ __kernel void VdWGBDerBorn(
     localData[localAtomIndex].force = 0;
     
     SYNC_WARPS;
+
+
+    if(y==x){//diagonal tile
+
+      unsigned int tj = tgx;
+      for (j = 0; j < TILE_SIZE; j++) {
+      
+	int localAtom2Index = tbx+tj;
+	real4 posq2 = localData[localAtom2Index].posq;
+	real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
+	real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
+	real r = sqrt(r2);
+	real scaling_factor2 = localData[localAtom2Index].scaling_factor;
+	bool isheavy2 = localData[localAtom2Index].isheavy;
+	real brw2 = localData[localAtom2Index].brw;
+	real bru2 = localData[localAtom2Index].bru;
+	real derw2 = 0;
+	real deru2 = 0;
+	int radtypei2 = localData[localAtom2Index].radtypei;
+	int radtypej2 = localData[localAtom2Index].radtypej;
+	real4 force2 = 0;
+	
+	int atom2 = x*TILE_SIZE+tj;
+	if(atom1 < NUM_ATOMS && atom2 < NUM_ATOMS && r2 < CUTOFF_SQUARED  && atom1 != atom2){
+	  //diagonal tile: atom2 descreens atom1 since both
+	  //  (atom1,atom2) and (atom2,atom1) pairs are processed
+
+	  if(isheavy2) {
+	    // atom2 descreens atom1
+	    int table_id = radtypei1 * ntypes_screener + radtypej2;
+	    int table_offset = table_size * table_id;
+	    real2 res = lookup_table(r,
+				     table_size, rmin, rmax,
+				     &(hy[table_offset]), &(hy2[table_offset]));
+	    derw2 += brw1*res.x;
+	    deru2 += bru1*res.x;
+	    //force of GB+VdW energies due to variations of Born radii 
+	    real4 w = delta * (bru1+brw1)*scaling_factor2*res.y/r;
+	    force1 += w; 
+	    force2 -= w;
+	  }
+	}
+	
+	localData[localAtom2Index].derw += derw2;
+	localData[localAtom2Index].deru += deru2;
+	localData[localAtom2Index].force += force2;	
+	
+	tj = (tj + 1) & (TILE_SIZE - 1);
+	SYNC_WARPS;
+      }
+
+      
+    }else{//off-diagonal tile
+
+      unsigned int tj = tgx;
+      for (j = 0; j < TILE_SIZE; j++) {
+	
+	int localAtom2Index = tbx+tj;
+	real4 posq2 = localData[localAtom2Index].posq;
+	real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
+	real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
+	real r = sqrt(r2);
+	real scaling_factor2 = localData[localAtom2Index].scaling_factor;
+	bool isheavy2 = localData[localAtom2Index].isheavy;
+	real brw2 = localData[localAtom2Index].brw;
+	real bru2 = localData[localAtom2Index].bru;
+	real derw2 = 0;
+	real deru2 = 0;
+	int radtypei2 = localData[localAtom2Index].radtypei;
+	int radtypej2 = localData[localAtom2Index].radtypej;
+	real4 force2 = 0;
+	
+	int atom2 = x*TILE_SIZE+tj;
+	if(atom1 < NUM_ATOMS && atom2 < NUM_ATOMS && r2 < CUTOFF_SQUARED){
+	  //off-diagonal tile: atom2 and atom1 descreen each other
+	  //since only one of the pairs (atom1,atom2) and (atom2,atom1)
+	  //is processed
+
+	  if(isheavy2) {
+	    // atom2 descreens atom1
+	    int table_id = radtypei1 * ntypes_screener + radtypej2;
+	    int table_offset = table_size * table_id;
+	    real2 res = lookup_table(r,
+				     table_size, rmin, rmax,
+				     &(hy[table_offset]), &(hy2[table_offset]));
+	    derw2 += brw1*res.x;
+	    deru2 += bru1*res.x;
+	    //force of GB+VdW energies due to variations of Born radii 
+	    real4 w = delta * (bru1+brw1)*scaling_factor2*res.y/r;
+	    force1 += w; 
+	    force2 -= w;
+	  }
+	  if(isheavy1){
+	    // atom1 descreens atom2
+	    int table_id = radtypei2 * ntypes_screener + radtypej1;
+	    int table_offset = table_size * table_id;
+	    real2 res = lookup_table(r,
+				     table_size, rmin, rmax,
+				     &(hy[table_offset]), &(hy2[table_offset]));
+	    derw1 += brw2*res.x;
+	    deru1 += bru2*res.x;
+	    //force of GB+VdW energies due to variations of Born radii 
+	    real4 w = - delta * (bru2+brw2)*scaling_factor1*res.y/r; //-delta because we are inverting i with j
+	    force2 += w;
+	    force1 -= w;
+	  }
+	}
+	
+	localData[localAtom2Index].derw += derw2;
+	localData[localAtom2Index].deru += deru2;
+	localData[localAtom2Index].force += force2;
+      
+	tj = (tj + 1) & (TILE_SIZE - 1);
+	SYNC_WARPS;
+      }
+
+    }//test for diagonal tile
+    SYNC_WARPS;
+    
+    //update W and U buffers
+    unsigned int atom2 = x*TILE_SIZE + tgx;
+#ifdef SUPPORTS_64_BIT_ATOMICS
+    atom_add(&VdWDerWBuffer_long[atom1], (long) (derw1*0x100000000));
+    atom_add(&GBDerUBuffer_long[atom1], (long) (deru1*0x100000000));
+    atom_add(&forceBuffers[atom1], (long) (force1.x*0x100000000));
+    atom_add(&forceBuffers[atom1+PADDED_NUM_ATOMS], (long) (force1.y*0x100000000));
+    atom_add(&forceBuffers[atom1+2*PADDED_NUM_ATOMS], (long) (force1.z*0x100000000));  
+    if (atom2 < PADDED_NUM_ATOMS) {
+      atom_add(&VdWDerWBuffer_long[atom2], (long) (localData[get_local_id(0)].derw*0x100000000));
+      atom_add(&GBDerUBuffer_long[atom2], (long) (localData[get_local_id(0)].deru*0x100000000));
+      atom_add(&forceBuffers[atom2], (long) (localData[get_local_id(0)].force.x*0x100000000));
+      atom_add(&forceBuffers[atom2+PADDED_NUM_ATOMS], (long) (localData[get_local_id(0)].force.y*0x100000000));
+      atom_add(&forceBuffers[atom2+2*PADDED_NUM_ATOMS], (long) (localData[get_local_id(0)].force.z*0x100000000));
+    }
+#else
+    unsigned int offset1 = atom1 + warp*PADDED_NUM_ATOMS;
+    unsigned int offset2 = atom2 + warp*PADDED_NUM_ATOMS;
+    VdWDerWBuffer[offset1] += derw1;
+    GBDerUBuffer[offset1] += deru1;
+    forceBuffers[offset1] += force1;
+    if (atom2 < PADDED_NUM_ATOMS){
+      VdWDerWBuffer[offset2] += localData[get_local_id(0)].derw;
+      GBDerUBuffer[offset2] += localData[get_local_id(0)].deru;
+      forceBuffers[offset2] += localData[get_local_id(0)].force;
+    }
+#endif
+  }
+#endif //USE_CUTOFF
+
+  //second loop, tiles without exclusions or all interactions if not using cutoffs
+#ifdef USE_CUTOFF
+  __local int atomIndices[FORCE_WORK_GROUP_SIZE];
+  unsigned int numTiles = interactionCount[0];
+  if(numTiles > maxTiles)
+    return; // There wasn't enough memory for the neighbor list.
+#endif
+  int pos = (int) (warp*(long)numTiles/totalWarps);
+  int end = (int) ((warp+1)*(long)numTiles/totalWarps);
+  while (pos < end) {
+#ifdef USE_CUTOFF
+    // y-atom block of the tile
+    // atoms in x-atom block (y <= x) are retrieved from interactingAtoms[] below 
+    uint y = tiles[pos];
+#else
+    // find x and y coordinates of the tile such that y <= x
+    int y = (int) floor(NUM_BLOCKS+0.5f-SQRT((NUM_BLOCKS+0.5f)*(NUM_BLOCKS+0.5f)-2*pos));
+    int x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
+    if (x < y || x >= NUM_BLOCKS) { // Occasionally happens due to roundoff error.
+      y += (x < y ? -1 : 1);
+      x = (pos-y*NUM_BLOCKS+y*(y+1)/2);
+    }
+#endif    
+    uint atom1 = y*TILE_SIZE + tgx;
+
+    // Load atom data for this tile.
+    real4 posq1 = posq[atom1];
+    real scaling_factor1 = volScalingFactor[atom1];
+    bool isheavy1 = ishydrogenParam[atom1] > 0 ? 0 : 1;
+    real brw1 = VdWDerBrW[atom1];
+    real bru1 = GBDerBrU[atom1];
+    real derw1 = 0;
+    real deru1 = 0;
+    int radtypei1 = radtypeScreened[atom1];
+    int radtypej1 = radtypeScreener[atom1];
+    real4 force1 = 0;
+
+#ifdef USE_CUTOFF
+    uint j = interactingAtoms[pos*TILE_SIZE + tgx];
+    atomIndices[get_local_id(0)] = j;
+    if(j<PADDED_NUM_ATOMS){
+      localData[localAtomIndex].posq = posq[j];
+      localData[localAtomIndex].scaling_factor = volScalingFactor[j];
+      localData[localAtomIndex].isheavy = ishydrogenParam[j] > 0 ? 0 : 1;
+      localData[localAtomIndex].brw = VdWDerBrW[j];
+      localData[localAtomIndex].bru = GBDerBrU[j];
+      localData[localAtomIndex].radtypei = radtypeScreened[j];
+      localData[localAtomIndex].radtypej = radtypeScreener[j];
+    }
+#else
+    unsigned int j = x*TILE_SIZE + tgx;
+    localData[localAtomIndex].posq = posq[j];
+    localData[localAtomIndex].scaling_factor = volScalingFactor[j];
+    localData[localAtomIndex].isheavy = ishydrogenParam[j] > 0 ? 0 : 1;
+    localData[localAtomIndex].brw = VdWDerBrW[j];
+    localData[localAtomIndex].bru = GBDerBrU[j];
+    localData[localAtomIndex].radtypei = radtypeScreened[j];
+    localData[localAtomIndex].radtypej = radtypeScreener[j];
+#endif
+    localData[localAtomIndex].derw = 0;
+    localData[localAtomIndex].deru = 0;
+    localData[localAtomIndex].force = 0;
+    
+    SYNC_WARPS;
     
     unsigned int tj = tgx;
     for (j = 0; j < TILE_SIZE; j++) {
@@ -682,10 +1060,20 @@ __kernel void VdWGBDerBorn(
       int radtypei2 = localData[localAtom2Index].radtypei;
       int radtypej2 = localData[localAtom2Index].radtypej;
       real4 force2 = 0;
-      
-      int atom2 = x*TILE_SIZE+tj;
-      
-      if (atom1 < NUM_ATOMS && atom2 < NUM_ATOMS && atom1 < atom2) {
+
+#ifdef USE_CUTOFF
+      int atom2 = atomIndices[localAtom2Index];
+#else
+      int atom2 = x*TILE_SIZE + tj;
+#endif
+      bool compute = atom1 < NUM_ATOMS && atom2 < NUM_ATOMS;
+#ifdef USE_CUTOFF
+      compute = compute && r2 < CUTOFF_SQUARED;
+#else
+      //when not using a neighbor list we are getting diagonal tiles here
+      if(x == y) compute = compute && atom1 < atom2;
+#endif
+      if (compute) {
 	
 	if(isheavy2) {
 	  // atom2 descreens atom1
@@ -728,7 +1116,11 @@ __kernel void VdWGBDerBorn(
     SYNC_WARPS;
     
     //update W and U buffers
-    unsigned int atom2 = x*TILE_SIZE + tgx;
+#ifdef USE_CUTOFF
+   uint atom2 = atomIndices[get_local_id(0)];
+#else
+   uint atom2 = x*TILE_SIZE + tgx;
+#endif
 #ifdef SUPPORTS_64_BIT_ATOMICS
     atom_add(&VdWDerWBuffer_long[atom1], (long) (derw1*0x100000000));
     atom_add(&GBDerUBuffer_long[atom1], (long) (deru1*0x100000000));

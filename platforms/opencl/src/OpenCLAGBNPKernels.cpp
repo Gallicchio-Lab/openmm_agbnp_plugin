@@ -288,7 +288,7 @@ int OpenCLCalcAGBNPForceKernel::copy_tree_to_device(void){
 }
 
 void OpenCLCalcAGBNPForceKernel::initialize(const System& system, const AGBNPForce& force) {
-    verbose_level = 0;
+    verbose_level = 0; 
 
     //save version
     version = force.getVersion();
@@ -425,6 +425,8 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
   bool useLong = cl.getSupports64BitGlobalAtomics();
   bool verbose = verbose_level > 0;
 
+  maxTiles = (nb.getUseCutoff() ? nb.getInteractingTiles().getSize() : 0);
+  
       {
       //run CPU version once to estimate sizes
       GaussVol *gvol;
@@ -715,28 +717,31 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
 
       //pass 1
       map<string, string> pairValueDefines;
-      if (useCutoff)
-	pairValueDefines["USE_CUTOFF"] = "1";
-      if (usePeriodic)
-	pairValueDefines["USE_PERIODIC"] = "1";
-      pairValueDefines["USE_EXCLUSIONS"] = "1";
       pairValueDefines["FORCE_WORK_GROUP_SIZE"] = cl.intToString(ov_work_group_size);
-      pairValueDefines["CUTOFF"] = cl.doubleToString(cutoffDistance);
-      pairValueDefines["CUTOFF_SQUARED"] = cl.doubleToString(cutoffDistance*cutoffDistance);
       pairValueDefines["NUM_ATOMS"] = cl.intToString(cl.getNumAtoms());
       pairValueDefines["NUM_ATOMS_TREE"] = cl.intToString(total_atoms_in_tree);
       pairValueDefines["PADDED_NUM_ATOMS"] = cl.intToString(cl.getPaddedNumAtoms());
       pairValueDefines["NUM_BLOCKS"] = cl.intToString(cl.getNumAtomBlocks());
       pairValueDefines["TILE_SIZE"] = cl.intToString(OpenCLContext::TileSize);
+      pairValueDefines["OV_WORK_GROUP_SIZE"] = cl.intToString(ov_work_group_size);
+      pairValueDefines["SMALL_VOLUME"] = "1.e-4";
+
+      if (useCutoff)
+	pairValueDefines["USE_CUTOFF"] = "1";
+      if (usePeriodic)
+	pairValueDefines["USE_PERIODIC"] = "1";
+      pairValueDefines["USE_EXCLUSIONS"] = "1";
+      pairValueDefines["CUTOFF"] = cl.doubleToString(cutoffDistance);
+      pairValueDefines["CUTOFF_SQUARED"] = cl.doubleToString(cutoffDistance*cutoffDistance);
+      int numContexts = cl.getPlatformData().contexts.size();
       int numExclusionTiles = nb.getExclusionTiles().getSize();
       pairValueDefines["NUM_TILES_WITH_EXCLUSIONS"] = cl.intToString(numExclusionTiles);
-      int numContexts = cl.getPlatformData().contexts.size();
       int startExclusionIndex = cl.getContextIndex()*numExclusionTiles/numContexts;
       int endExclusionIndex = (cl.getContextIndex()+1)*numExclusionTiles/numContexts;
       pairValueDefines["FIRST_EXCLUSION_TILE"] = cl.intToString(startExclusionIndex);
       pairValueDefines["LAST_EXCLUSION_TILE"] = cl.intToString(endExclusionIndex);
-      pairValueDefines["OV_WORK_GROUP_SIZE"] = cl.intToString(ov_work_group_size);
-      pairValueDefines["SMALL_VOLUME"] = "1.e-4";
+
+
 
       map<string, string> replacements;
 
@@ -1077,48 +1082,18 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++, cl.getPosq().getDeviceBuffer() );
       kernel.setArg<cl::Buffer>(index++, GaussianExponent->getDeviceBuffer() );
       kernel.setArg<cl::Buffer>(index++, GaussianVolume->getDeviceBuffer() );
+      //neighbor list
       if (useCutoff) {
+	InitOverlapTreeCountKernel_first_nbarg = index;
         kernel.setArg<cl::Buffer>(index++, nb.getInteractingTiles().getDeviceBuffer());
         kernel.setArg<cl::Buffer>(index++, nb.getInteractionCount().getDeviceBuffer());
+	kernel.setArg<cl::Buffer>(index++, nb.getInteractingAtoms().getDeviceBuffer());
         kernel.setArg<cl_uint>(index++, nb.getInteractingTiles().getSize());
+        kernel.setArg<cl::Buffer>(index++, nb.getExclusionTiles().getDeviceBuffer());
       }else{
 	kernel.setArg<cl_uint>(index++, cl.getNumAtomBlocks()*(cl.getNumAtomBlocks()+1)/2);
       }
       kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
-
-#ifdef NOTNOW
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, cl.getPosq().getDeviceBuffer() );
-      kernel.setArg<cl::Buffer>(index++, GaussianExponent->getDeviceBuffer() );
-      kernel.setArg<cl::Buffer>(index++, GaussianVolume->getDeviceBuffer() );
-      kernel.setArg<cl::Buffer>(index++, AtomicGamma->getDeviceBuffer() );
-
-      kernel.setArg<cl::Buffer>(index++, nb.getExclusions().getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, nb.getExclusionTiles().getDeviceBuffer());
-      if (useCutoff) {
-        kernel.setArg<cl::Buffer>(index++, nb.getInteractingTiles().getDeviceBuffer());
-        kernel.setArg<cl::Buffer>(index++, nb.getInteractionCount().getDeviceBuffer());
-
-	//TO BE FIXED
-	cl_float zero(0);
-	mm_float4 zero4(zero,zero,zero,zero);
-	kernel.setArg<mm_float4>(index++, zero4);
-	kernel.setArg<mm_float4>(index++, zero4);
-	kernel.setArg<mm_float4>(index++, zero4);
-	kernel.setArg<mm_float4>(index++, zero4);
-	kernel.setArg<mm_float4>(index++, zero4);
-
-        //index += 5; // The periodic box size arguments are set when the kernel is executed.
-        kernel.setArg<cl_uint>(index++, nb.getInteractingTiles().getSize());
-        kernel.setArg<cl::Buffer>(index++, nb.getBlockCenters().getDeviceBuffer());
-        kernel.setArg<cl::Buffer>(index++, nb.getBlockBoundingBoxes().getDeviceBuffer());
-        kernel.setArg<cl::Buffer>(index++, nb.getInteractingAtoms().getDeviceBuffer());
-      }else{
-	kernel.setArg<cl_uint>(index++, cl.getNumAtomBlocks()*(cl.getNumAtomBlocks()+1)/2);
-      }
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
-#endif
-
 
       kernel_name = "reduceovCountBuffer";
       replacements["KERNEL_NAME"] = kernel_name;
@@ -1156,9 +1131,12 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++, GaussianVolume->getDeviceBuffer() );
       kernel.setArg<cl::Buffer>(index++, AtomicGamma->getDeviceBuffer() );
       if (useCutoff) {
+	InitOverlapTreeKernel_first_nbarg = index;
         kernel.setArg<cl::Buffer>(index++, nb.getInteractingTiles().getDeviceBuffer());
         kernel.setArg<cl::Buffer>(index++, nb.getInteractionCount().getDeviceBuffer());
+	kernel.setArg<cl::Buffer>(index++, nb.getInteractingAtoms().getDeviceBuffer());
         kernel.setArg<cl_uint>(index++, nb.getInteractingTiles().getSize());
+        kernel.setArg<cl::Buffer>(index++, nb.getExclusionTiles().getDeviceBuffer());
       }else{
 	kernel.setArg<cl_uint>(index++, cl.getNumAtomBlocks()*(cl.getNumAtomBlocks()+1)/2);
       }
@@ -1568,6 +1546,7 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       defines["TILE_SIZE"] = cl.intToString(OpenCLContext::TileSize);
       defines["NTILES_IN_BLOCK"] = "1";//cl.intToString(ov_work_group_size/OpenCLContext::TileSize);
 
+      
       map<string, string> replacements;
 
 
@@ -1607,11 +1586,24 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       defines["AGBNP_RADIUS_PRECISION"] = cl.intToString(AGBNP_RADIUS_PRECISION) + "u";
       defines["TILE_SIZE"] = cl.intToString(OpenCLContext::TileSize);
       defines["FORCE_WORK_GROUP_SIZE"] = cl.intToString(ov_work_group_size);
-      if (useCutoff)
-	defines["USE_CUTOFF"] = "1";
       defines["NUM_BLOCKS"] = cl.intToString(cl.getNumAtomBlocks());
       defines["AGBNP_I4LOOKUP_MAXA"] = cl.intToString(AGBNP_I4LOOKUP_MAXA);
 
+      if (useCutoff)
+	defines["USE_CUTOFF"] = "1";
+      if (usePeriodic)
+	defines["USE_PERIODIC"] = "1";
+      defines["USE_EXCLUSIONS"] = "1";
+      defines["CUTOFF"] = cl.doubleToString(cutoffDistance);
+      defines["CUTOFF_SQUARED"] = cl.doubleToString(cutoffDistance*cutoffDistance);
+      int numContexts = cl.getPlatformData().contexts.size();
+      int numExclusionTiles = nb.getExclusionTiles().getSize();
+      defines["NUM_TILES_WITH_EXCLUSIONS"] = cl.intToString(numExclusionTiles);
+      int startExclusionIndex = cl.getContextIndex()*numExclusionTiles/numContexts;
+      int endExclusionIndex = (cl.getContextIndex()+1)*numExclusionTiles/numContexts;
+      defines["FIRST_EXCLUSION_TILE"] = cl.intToString(startExclusionIndex);
+      defines["LAST_EXCLUSION_TILE"] = cl.intToString(endExclusionIndex);
+      
       map<string, string> replacements;
       replacements["INIT_VARS"] = "";
 
@@ -1623,7 +1615,6 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       if(verbose) cout << "compiling file AGBNPBornRadii.cl" << " ... ";
       file = cl.replaceStrings(OpenCLAGBNPKernelSources::AGBNPBornRadii, replacements);
       program = cl.createProgram(file, defines);
-
 
       int itable = 21;
       int num_values = 4*i4_table_size;
@@ -1681,9 +1672,12 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++, ishydrogenParam->getDeviceBuffer() );
       //neighbor list
       if (useCutoff) {
+	inverseBornRadiiKernel_first_nbarg = index;
         kernel.setArg<cl::Buffer>(index++, nb.getInteractingTiles().getDeviceBuffer());
         kernel.setArg<cl::Buffer>(index++, nb.getInteractionCount().getDeviceBuffer());
+	kernel.setArg<cl::Buffer>(index++, nb.getInteractingAtoms().getDeviceBuffer());
         kernel.setArg<cl_uint>(index++, nb.getInteractingTiles().getSize());
+        kernel.setArg<cl::Buffer>(index++, nb.getExclusionTiles().getDeviceBuffer());
       }else{
 	kernel.setArg<cl_uint>(index++, cl.getNumAtomBlocks()*(cl.getNumAtomBlocks()+1)/2);
       }
@@ -1768,9 +1762,12 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++, ishydrogenParam->getDeviceBuffer() );
       //neighbor list
       if (useCutoff) {
+	VdWGBDerBornKernel_first_nbarg = index;
         kernel.setArg<cl::Buffer>(index++, nb.getInteractingTiles().getDeviceBuffer());
         kernel.setArg<cl::Buffer>(index++, nb.getInteractionCount().getDeviceBuffer());
+	kernel.setArg<cl::Buffer>(index++, nb.getInteractingAtoms().getDeviceBuffer());
         kernel.setArg<cl_uint>(index++, nb.getInteractingTiles().getSize());
+        kernel.setArg<cl::Buffer>(index++, nb.getExclusionTiles().getDeviceBuffer());
       }else{
 	kernel.setArg<cl_uint>(index++, cl.getNumAtomBlocks()*(cl.getNumAtomBlocks()+1)/2);
       }
@@ -1826,10 +1823,23 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       defines["PADDED_NUM_ATOMS"] = cl.intToString(cl.getPaddedNumAtoms());
       defines["TILE_SIZE"] = cl.intToString(OpenCLContext::TileSize);
       defines["FORCE_WORK_GROUP_SIZE"] = cl.intToString(ov_work_group_size);
-      if (useCutoff)
-	defines["USE_CUTOFF"] = "1";
       defines["NUM_BLOCKS"] = cl.intToString(cl.getNumAtomBlocks());
       defines["AGBNP_DIELECTRIC_FACTOR"] = cl.doubleToString(dielectric_factor);
+
+      if (useCutoff)
+	defines["USE_CUTOFF"] = "1";
+      if (usePeriodic)
+	defines["USE_PERIODIC"] = "1";
+      defines["USE_EXCLUSIONS"] = "1";
+      defines["CUTOFF"] = cl.doubleToString(cutoffDistance);
+      defines["CUTOFF_SQUARED"] = cl.doubleToString(cutoffDistance*cutoffDistance);
+      int numContexts = cl.getPlatformData().contexts.size();
+      int numExclusionTiles = nb.getExclusionTiles().getSize();
+      defines["NUM_TILES_WITH_EXCLUSIONS"] = cl.intToString(numExclusionTiles);
+      int startExclusionIndex = cl.getContextIndex()*numExclusionTiles/numContexts;
+      int endExclusionIndex = (cl.getContextIndex()+1)*numExclusionTiles/numContexts;
+      defines["FIRST_EXCLUSION_TILE"] = cl.intToString(startExclusionIndex);
+      defines["LAST_EXCLUSION_TILE"] = cl.intToString(endExclusionIndex);
 
       map<string, string> replacements;
       replacements["INIT_VARS"] = "";
@@ -1874,9 +1884,12 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++, BornRadius->getDeviceBuffer());
       //neighbor list
       if (useCutoff) {
+	GBPairEnergyKernel_first_nbarg = index;
         kernel.setArg<cl::Buffer>(index++, nb.getInteractingTiles().getDeviceBuffer());
         kernel.setArg<cl::Buffer>(index++, nb.getInteractionCount().getDeviceBuffer());
+	kernel.setArg<cl::Buffer>(index++, nb.getInteractingAtoms().getDeviceBuffer());
         kernel.setArg<cl_uint>(index++, nb.getInteractingTiles().getSize());
+        kernel.setArg<cl::Buffer>(index++, nb.getExclusionTiles().getDeviceBuffer());
       }else{
 	kernel.setArg<cl_uint>(index++, cl.getNumAtomBlocks()*(cl.getNumAtomBlocks()+1)/2);
       }
@@ -1921,6 +1934,14 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   niterations += 1;
 
   if(verbose) cout << "Executing AGBNP1" << endl;
+
+  bool nb_reassign = false;
+  if(useCutoff){
+    if(maxTiles < nb.getInteractingTiles().getSize()) {
+      maxTiles = nb.getInteractingTiles().getSize();
+      nb_reassign = true;
+    }
+  }
   
   //------------------------------------------------------------------------------------------------------------
   // Tree construction
@@ -1936,9 +1957,18 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   if(verbose_level > 2) cout << "Executing InitOverlapTreeKernel_1body_1" << endl;
   //fills up tree with 1-body overlaps
   cl.executeKernel(InitOverlapTreeKernel_1body_1, ov_work_group_size*num_compute_units, ov_work_group_size);
-  
-  if(verbose_level > 2) cout << "Executing InitOverlapTreeCountKernel" << endl;
+
   // compute numbers of 2-body overlaps, that is children counts of 1-body overlaps
+  if(verbose_level > 2) cout << "Executing InitOverlapTreeCountKernel" << endl;
+  if(nb_reassign){
+    int index = InitOverlapTreeCountKernel_first_nbarg;
+    cl::Kernel kernel = InitOverlapTreeCountKernel;
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractingTiles().getDeviceBuffer());
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractionCount().getDeviceBuffer());
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractingAtoms().getDeviceBuffer());
+    kernel.setArg<cl_uint>(index++, nb.getInteractingTiles().getSize());
+    kernel.setArg<cl::Buffer>(index++, nb.getExclusionTiles().getDeviceBuffer());
+  }
   cl.executeKernel(InitOverlapTreeCountKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
   if(verbose_level > 2) cout << "Executing reduceovCountBufferKernel" << endl;
@@ -1946,6 +1976,15 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   cl.executeKernel(reduceovCountBufferKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
   if(verbose_level > 2) cout << "Executing InitOverlapTreeKernel" << endl;
+  if(nb_reassign){
+    int index = InitOverlapTreeKernel_first_nbarg;
+    cl::Kernel kernel = InitOverlapTreeKernel;
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractingTiles().getDeviceBuffer());
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractionCount().getDeviceBuffer());
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractingAtoms().getDeviceBuffer());
+    kernel.setArg<cl_uint>(index++, nb.getInteractingTiles().getSize());
+    kernel.setArg<cl::Buffer>(index++, nb.getExclusionTiles().getDeviceBuffer());
+  }
   cl.executeKernel(InitOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
   if(verbose_level > 2) cout << "Executing resetComputeOverlapTreeKernel" << endl;
@@ -2152,6 +2191,15 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   cl.executeKernel(initBornRadiiKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
   if(verbose_level > 2) cout << "Executing inverseBornRadiiKernel" << endl;
+  if(nb_reassign) {
+    int index = inverseBornRadiiKernel_first_nbarg;
+    cl::Kernel kernel = inverseBornRadiiKernel;
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractingTiles().getDeviceBuffer());
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractionCount().getDeviceBuffer());
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractingAtoms().getDeviceBuffer());
+    kernel.setArg<cl_uint>(index++, nb.getInteractingTiles().getSize());
+    kernel.setArg<cl::Buffer>(index++, nb.getExclusionTiles().getDeviceBuffer());
+  }
   cl.executeKernel(inverseBornRadiiKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
   if(verbose_level > 3 && !useLong){
@@ -2230,6 +2278,15 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   cl.executeKernel(initGBEnergyKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
   if(verbose_level > 2) cout << "Executing GBPairEnergyKernel" << endl;
+  if(nb_reassign) {
+    int index = GBPairEnergyKernel_first_nbarg;
+    cl::Kernel kernel = GBPairEnergyKernel;
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractingTiles().getDeviceBuffer());
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractionCount().getDeviceBuffer());
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractingAtoms().getDeviceBuffer());
+    kernel.setArg<cl_uint>(index++, nb.getInteractingTiles().getSize());
+    kernel.setArg<cl::Buffer>(index++, nb.getExclusionTiles().getDeviceBuffer());
+  }
   cl.executeKernel(GBPairEnergyKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
   if(verbose_level > 2) cout << "Executing reduceGBEnergyKernel" << endl;
@@ -2276,8 +2333,40 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   cl.executeKernel(initVdWGBDerBornKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
   if(verbose_level > 2) cout << "Executing VdWGBDerBornKernel" << endl;
+  if(nb_reassign){
+    int index = VdWGBDerBornKernel_first_nbarg;
+    cl::Kernel kernel = VdWGBDerBornKernel;
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractingTiles().getDeviceBuffer());
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractionCount().getDeviceBuffer());
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractingAtoms().getDeviceBuffer());
+    kernel.setArg<cl_uint>(index++, nb.getInteractingTiles().getSize());
+    kernel.setArg<cl::Buffer>(index++, nb.getExclusionTiles().getDeviceBuffer());
+  }
   cl.executeKernel(VdWGBDerBornKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
+  if(verbose_level > 3 && !useLong){
+    vector<mm_float4> f_buff(cl.getPaddedNumAtoms()*num_compute_units);
+    vector<mm_float4> ff(cl.getPaddedNumAtoms());
+    for(int iatom = 0; iatom < cl.getPaddedNumAtoms(); iatom++){
+      ff[iatom].x = ff[iatom].y = ff[iatom].z = 0.;
+    }
+    cl.getForceBuffers().download(f_buff);
+    for(int cu=0;cu<num_compute_units;cu++){
+      for(int iatom = 0; iatom < cl.getPaddedNumAtoms(); iatom++){
+	int i = cl.getPaddedNumAtoms()*cu + iatom;
+	cout << "F_buff: " << cu << " " << iatom << " " << f_buff[i].x << " " << f_buff[i].y << " " << f_buff[i].z << endl;
+	ff[iatom].x += f_buff[i].x;
+	ff[iatom].y += f_buff[i].y;
+	ff[iatom].z += f_buff[i].z;
+      }
+    }
+    for(int iatom = 0; iatom < cl.getPaddedNumAtoms(); iatom++){
+	cout << "F: " << iatom << " " << ff[iatom].x << " " << ff[iatom].y << " " << ff[iatom].z << endl;
+    }
+  }
+
+
+  
   if(verbose_level > 2) cout << "Executing reduceVdWGBDerBornKernel" << endl;
   cl.executeKernel(reduceVdWGBDerBornKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 

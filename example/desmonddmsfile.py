@@ -273,7 +273,7 @@ class DesmondDMSFile(object):
 
     
     def createSystem(self, nonbondedMethod=ff.NoCutoff, nonbondedCutoff=1.0*nanometer,
-                     ewaldErrorTolerance=0.0005, removeCMMotion=True, hydrogenMass=None, OPLS=False, implicitSolvent=None):
+                     ewaldErrorTolerance=0.0005, removeCMMotion=True, hydrogenMass=None, OPLS=False, implicitSolvent=None, AGBNPVersion=1):
         """Construct an OpenMM System representing the topology described by this dms file
 
         Parameters:
@@ -286,7 +286,8 @@ class DesmondDMSFile(object):
            subtracted from the heavy atom to keep their total mass the same.
          - OPLS (boolean=False) If True, force field parameters are interpreted as OPLS parameters; OPLS variants of 
            torsional and non-bonded forces are constructed.
-	 - implicitSolvent (object=None) if not None, the implicit solvent model to use, the only allowed value is HCT
+	 - implicitSolvent (object=None) if not None, the implicit solvent model to use, allowed values are HCT, AGBNP
+         - AGBNPVersion (int=1) AGBNP version number 1 or 2
         """
         self._checkForUnsupportedTerms()
         sys = mm.System()
@@ -326,7 +327,7 @@ class DesmondDMSFile(object):
             cnb.setNonbondedMethod(methodMap[nonbondedMethod])
             cnb.setCutoffDistance(nonbondedCutoff)
         
-	#add implicit solvent model. Right now, only HCT model is considered.
+	#add implicit solvent model.
 	if implicitSolvent is not None:
 
             print('Adding implicit solvent ...')
@@ -402,16 +403,15 @@ class DesmondDMSFile(object):
                 if AGBNPEnabled:
                     gb_parms = self._get_agbnp2_params()
                     if gb_parms:
-                        print('Adding AGBNP force ...')
                         gb = AGBNPForce()
                         gb.setNonbondedMethod(methodMap[nonbondedMethod])
                         gb.setCutoffDistance(nonbondedCutoff)
+                        gb.setVersion(AGBNPVersion)
+                        print('Using AGBNP force version %d ...' % AGBNPVersion)
                         # add particles
                         for i in range(len(gb_parms)):
                             [radiusN,chargeN,gammaN,alphaN,hbtype,hbwN,ishydrogenN] = gb_parms[i]
                             h_flag = ishydrogenN > 0
-                            Roffset = 0.05;
-                            radiusN += Roffset;
                             gb.addParticle(radiusN, gammaN, alphaN, chargeN, h_flag)
                             #print "Adding", radiusN, gammaN, h_flag
                         sys.addForce(gb)
