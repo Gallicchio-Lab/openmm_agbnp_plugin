@@ -1870,7 +1870,7 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       
       //GBPairEnergy kernel
       bool deviceIsCpu = (cl.getDevice().getInfo<CL_DEVICE_TYPE>() == CL_DEVICE_TYPE_CPU);
-      if(deviceIsCpu){
+      if(deviceIsCpu){ 
 	kernel_name = "GBPairEnergy_cpu";
       }else{
 	kernel_name = "GBPairEnergy";
@@ -1975,40 +1975,6 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   // do a prefix sum of 2-body counts to compute children start indexes to store 2-body overlaps computed by InitOverlapTreeKernel below
   cl.executeKernel(reduceovCountBufferKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
-  if(verbose_level > 2) cout << "Executing InitOverlapTreeKernel" << endl;
-  if(nb_reassign){
-    int index = InitOverlapTreeKernel_first_nbarg;
-    cl::Kernel kernel = InitOverlapTreeKernel;
-    kernel.setArg<cl::Buffer>(index++, nb.getInteractingTiles().getDeviceBuffer());
-    kernel.setArg<cl::Buffer>(index++, nb.getInteractionCount().getDeviceBuffer());
-    kernel.setArg<cl::Buffer>(index++, nb.getInteractingAtoms().getDeviceBuffer());
-    kernel.setArg<cl_uint>(index++, nb.getInteractingTiles().getSize());
-    kernel.setArg<cl::Buffer>(index++, nb.getExclusionTiles().getDeviceBuffer());
-  }
-  cl.executeKernel(InitOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
-
-  if(verbose_level > 2) cout << "Executing resetComputeOverlapTreeKernel" << endl;
-  cl.executeKernel(resetComputeOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
-
-  if(verbose_level > 2) cout << "Executing ComputeOverlapTree_1passKernel" << endl;
-  cl.executeKernel(ComputeOverlapTree_1passKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
-  //------------------------------------------------------------------------------------------------------------
-
-
-  //------------------------------------------------------------------------------------------------------------
-  // Volume energy function 1
-  //
-  if(verbose_level > 2) cout << "Executing resetSelfVolumesKernel" << endl;
-  cl.executeKernel(resetSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
-
-  if(verbose_level > 2) cout << "Executing computeSelfVolumesKernel" << endl;
-  cl.executeKernel(computeSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
-
-
-  if(verbose_level > 2) cout << "Executing reduceSelfVolumesKernel_buffer" << endl;
-  cl.executeKernel(reduceSelfVolumesKernel_buffer, ov_work_group_size*num_compute_units, ov_work_group_size);
-
-
   if(verbose_level > 4){
     float self_volume = 0.0;
     vector<cl_float> self_volumes(total_tree_size);
@@ -2068,6 +2034,42 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
     }
     //std::cout << "Volume (from self volumes):" << self_volume <<std::endl;
   }
+
+  
+  if(verbose_level > 2) cout << "Executing InitOverlapTreeKernel" << endl;
+  if(nb_reassign){
+    int index = InitOverlapTreeKernel_first_nbarg;
+    cl::Kernel kernel = InitOverlapTreeKernel;
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractingTiles().getDeviceBuffer());
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractionCount().getDeviceBuffer());
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractingAtoms().getDeviceBuffer());
+    kernel.setArg<cl_uint>(index++, nb.getInteractingTiles().getSize());
+    kernel.setArg<cl::Buffer>(index++, nb.getExclusionTiles().getDeviceBuffer());
+  }
+  cl.executeKernel(InitOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing resetComputeOverlapTreeKernel" << endl;
+  cl.executeKernel(resetComputeOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing ComputeOverlapTree_1passKernel" << endl;
+  cl.executeKernel(ComputeOverlapTree_1passKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+  //------------------------------------------------------------------------------------------------------------
+
+
+  //------------------------------------------------------------------------------------------------------------
+  // Volume energy function 1
+  //
+  if(verbose_level > 2) cout << "Executing resetSelfVolumesKernel" << endl;
+  cl.executeKernel(resetSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing computeSelfVolumesKernel" << endl;
+  cl.executeKernel(computeSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+
+  if(verbose_level > 2) cout << "Executing reduceSelfVolumesKernel_buffer" << endl;
+  cl.executeKernel(reduceSelfVolumesKernel_buffer, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+
   
   if(false){
     vector<int> size(num_sections);
@@ -2270,7 +2272,6 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   }
 
 
-  
   //------------------------------------------------------------------------------------------------------------
   //GB energy function
   //
