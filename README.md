@@ -1,11 +1,11 @@
-# OpenMM AGBNP plugin (work in progress)
+# OpenMM AGBNP plugin
 
-**this software is incomplete and under development**
+A plugin that implements the AGBNP1 implicit solvent model [1] for OpenMM.
 
-A plugin that will implement the AGBNP implicit solvent model [1,2] in OpenMM.
+The plugin supports the OpenCL and Reference platforms. Implementation of the AGBNP2 model [2] is in progress.
 
 Emilio Gallicchio <egallicchio@brooklyn.cuny.edu>
-Last Modified: January 2017
+Last Modified: October 2017
 
 
 ## License
@@ -14,7 +14,9 @@ This software is released under the LGPL license. See LICENSE.
 
 ## Credits
 
-This software is written and maintained by Emilio Gallicchio <egallicchio@brooklyn.cuny.edu> with support from a grant from the National Science Foundation (ACI 1440665).
+This software is written and maintained by Emilio Gallicchio <egallicchio@brooklyn.cuny.edu>.
+
+Support from the National Science Foundation (ACI 1440665) is acknowledged. 
 
 The plugin interface is based on the [openmmexampleplugin](https://github.com/peastman/openmmexampleplugin) by Peter Eastman.
 
