@@ -9,9 +9,13 @@ from datetime import datetime
 
 print("Started at: " + str(time.asctime()))
 start=datetime.now()
-shutil.copyfile('trpcage.dms','trpcage2.dms')
-testDes = DesmondDMSFile('trpcage2.dms')
+#shutil.copyfile('1li2_2.dms','1li2_agbnp1.dms')
+#testDes = DesmondDMSFile('1li2_agbnp1.dms')
+shutil.copyfile('trpcage.dms','trpcage_2.dms')
+testDes = DesmondDMSFile('trpcage_2.dms')
 system = testDes.createSystem(nonbondedMethod=NoCutoff, OPLS = True, implicitSolvent='AGBNP')
+#system = testDes.createSystem(nonbondedMethod=CutoffNonPeriodic,nonbondedCutoff=1*nanometer, OPLS = True, implicitSolvent='AGBNP')
+
 
 #Choose Reference or OpenCL platform
 
@@ -22,6 +26,7 @@ platform = Platform.getPlatformByName('OpenCL')
 prop = {}
 #prop = {"OpenCLPrecision" : "single"}
 #prop= {"OpenCLPrecision" : "single", "OpenCLPlatformIndex" : "1", "OpenCLDeviceIndex": "0"};
+#prop= {"OpenCLPlatformIndex" : "0"};
 
 
 
@@ -36,12 +41,8 @@ state = simulation.context.getState(getEnergy = True)
 print(state.getPotentialEnergy())
 
 simulation.minimizeEnergy()
-simulation.reporters.append(StateDataReporter(stdout, 10, step=True, potentialEnergy=True,totalEnergy=True,temperature=True))
-simulation.step(1000)
-positions = simulation.context.getState(getPositions=True).getPositions()
-velocities = simulation.context.getState(getVelocities=True).getVelocities()
-
-simulation.step(1000)
+simulation.reporters.append(StateDataReporter(stdout, 1000, step=True, potentialEnergy=True,totalEnergy=True,temperature=True))
+simulation.step(10000)
 positions = simulation.context.getState(getPositions=True).getPositions()
 velocities = simulation.context.getState(getVelocities=True).getVelocities()
 
@@ -66,4 +67,3 @@ testDes.close()#
 #
 elapsed=end - start
 print("elapsed time="+str(elapsed.seconds+elapsed.microseconds*1e-6)+"s")
-

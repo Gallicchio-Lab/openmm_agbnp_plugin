@@ -6,8 +6,8 @@ import os, time, shutil
 from desmonddmsfile import *
 from datetime import datetime
 
-shutil.copyfile('2clr_2.dms','2clr_3.dms')
-testDes = DesmondDMSFile('2clr_3.dms')
+shutil.copyfile('2clr_agbnp1.dms','2clr_agbnp1-out.dms')
+testDes = DesmondDMSFile('2clr_agbnp1-out.dms')
 system = testDes.createSystem(nonbondedMethod=CutoffNonPeriodic,nonbondedCutoff=1*nanometer, OPLS = True, implicitSolvent='AGBNP')
 
 #Choose Reference or OpenCL platform

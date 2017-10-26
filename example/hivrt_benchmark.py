@@ -6,8 +6,8 @@ import os, time, shutil
 from desmonddmsfile import *
 from datetime import datetime
 
-shutil.copyfile('hivrt_2.dms','hivrt_3.dms')
-testDes = DesmondDMSFile('hivrt_3.dms')
+shutil.copyfile('hivrt_agbnp1.dms','hivrt_agbnp1-out.dms')
+testDes = DesmondDMSFile('hivrt_agbnp1-out.dms')
 system = testDes.createSystem(nonbondedMethod=CutoffNonPeriodic,nonbondedCutoff=1*nanometer, OPLS = True, implicitSolvent='AGBNP')
 
 #Choose Reference or OpenCL platform

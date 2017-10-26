@@ -6,8 +6,9 @@ import os, time, shutil
 from desmonddmsfile import *
 from datetime import datetime
 
-shutil.copyfile('rnaseh_2.dms','rnaseh_3.dms')
-testDes = DesmondDMSFile('rnaseh_3.dms')
+shutil.copyfile('rnaseh_agbnp1.dms','rnaseh_agbnp1_out.dms')
+testDes = DesmondDMSFile('rnaseh_agbnp1_out.dms')
+#system = testDes.createSystem(nonbondedMethod=NoCutoff, OPLS = True, implicitSolvent='AGBNP')
 system = testDes.createSystem(nonbondedMethod=CutoffNonPeriodic,nonbondedCutoff=1*nanometer, OPLS = True, implicitSolvent='AGBNP')
 
 #Choose Reference or OpenCL platform
@@ -15,8 +16,10 @@ system = testDes.createSystem(nonbondedMethod=CutoffNonPeriodic,nonbondedCutoff=
 #platform = Platform.getPlatformByName('Reference')
 #prop = {}
 platform = Platform.getPlatformByName('OpenCL')
-prop = {"OpenCLPrecision" : "single"}
+prop = {};
+#prop = {"OpenCLPrecision" : "single"}
 #prop= {"OpenCLPrecision" : "single", "OpenCLPlatformIndex" : "1", "OpenCLDeviceIndex": "0"};
+prop= {"OpenCLPlatformIndex" : "0"};
 
 integrator = LangevinIntegrator(300*kelvin, 1.0/picosecond, 0.001*picoseconds)
 simulation = Simulation(testDes.topology, system, integrator, platform, prop)

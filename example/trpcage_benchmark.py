@@ -6,16 +6,17 @@ import os, time, shutil
 from desmonddmsfile import *
 from datetime import datetime
 
-shutil.copyfile('trpcage_2.dms','trpcage_3.dms')
-testDes = DesmondDMSFile('trpcage_3.dms')
-system = testDes.createSystem(nonbondedMethod=CutoffNonPeriodic,nonbondedCutoff=1*nanometer, OPLS = True, implicitSolvent='AGBNP')
+shutil.copyfile('trpcage_agbnp1.dms','trpcage_agbnp1-out.dms')
+testDes = DesmondDMSFile('trpcage_agbnp1-out.dms')
+system = testDes.createSystem(nonbondedMethod=NoCutoff, OPLS = True, implicitSolvent='AGBNP')
 
 #Choose Reference or OpenCL platform
 
 #platform = Platform.getPlatformByName('Reference')
 #prop = {}
 platform = Platform.getPlatformByName('OpenCL')
-prop = {"OpenCLPrecision" : "single"}
+prop = {};
+#prop = {"OpenCLPrecision" : "single"}
 #prop= {"OpenCLPrecision" : "single", "OpenCLPlatformIndex" : "1", "OpenCLDeviceIndex": "0"};
 
 integrator = LangevinIntegrator(300*kelvin, 1.0/picosecond, 0.001*picoseconds)
