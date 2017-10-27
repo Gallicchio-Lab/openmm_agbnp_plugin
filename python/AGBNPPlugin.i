@@ -67,7 +67,7 @@ public:
 
     void setNonbondedMethod(NonbondedMethod method);
 
-    void setVersion(int version);
+    void setVersion(int agbnp_version);
     /*
      * The reference parameters to this function are output values.
      * Marking them as such will cause swig to return a tuple.

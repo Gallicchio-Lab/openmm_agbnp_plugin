@@ -111,12 +111,78 @@ void ReferenceCalcAGBNPForceKernel::initialize(const System& system, const AGBNP
 
 double ReferenceCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeForces, bool includeEnergy) {
   double energy = 0.0;
-  if(version == 1){
+  if(version == 0){
+    energy = executeGVolSA(context, includeForces, includeEnergy);
+  }else if(version == 1){
     energy = executeAGBNP1(context, includeForces, includeEnergy);
   }else if(version == 2){
     energy = executeAGBNP2(context, includeForces, includeEnergy);
   }
   return energy;
+}
+
+
+double ReferenceCalcAGBNPForceKernel::executeGVolSA(ContextImpl& context, bool includeForces, bool includeEnergy) {
+
+  //sequence: volume1->volume2
+
+  
+  //weights
+    RealOpenMM w_evol = 1.0;
+    
+    vector<RealVec>& pos = extractPositions(context);
+    vector<RealVec>& force = extractForces(context);
+    RealOpenMM energy = 0.0;
+    int verbose_level = 0;
+    int init = 0; 
+
+    vector<RealOpenMM> nu(numParticles);
+
+
+    if(verbose_level > 0) cout << "Executing GVolSA" << endl;
+    
+    if(verbose_level > 0){
+      cout << "-----------------------------------------------" << endl;
+    } 
+
+    
+    // volume energy function 1
+    RealOpenMM volume1, vol_energy1;
+    for(int i = 0; i < numParticles; i++){
+      nu[i] = gammas[i]/SA_DR;
+    }
+    gvol->set_radii(radii_large);
+    gvol->set_gammas(nu);
+    gvol->compute_tree(pos);
+    gvol->compute_volume(pos, volume1, vol_energy1, vol_force, free_volume, self_volume);
+    
+    //returns energy and gradients from volume energy function
+    for(int i = 0; i < numParticles; i++){
+      force[i] += vol_force[i] * w_evol;
+    }
+    energy += vol_energy1 * w_evol;
+    if(verbose_level > 0){
+      cout << "Volume energy 1: " << vol_energy1 << endl;
+    }
+
+    // volume energy function 2 (small radii)
+    RealOpenMM vol_energy2, volume2;
+    for(int i = 0; i < numParticles; i++){
+      nu[i] = -gammas[i]/SA_DR;
+    }
+    gvol->rescan_tree_volumes(pos, radii_vdw, nu);
+    gvol->compute_volume(pos, volume2, vol_energy2, vol_force, free_volume, self_volume);
+    for(int i = 0; i < numParticles; i++){
+      force[i] += vol_force[i] * w_evol;
+    }
+    energy += vol_energy2 * w_evol;
+    if(verbose_level > 0){
+      cout << "Volume energy 2: " << vol_energy2 << endl;
+      cout << "Surface area energy: " << vol_energy1 + vol_energy2 << endl;
+    }
+    
+    //returns energy
+    return (double)energy;
 }
 
 

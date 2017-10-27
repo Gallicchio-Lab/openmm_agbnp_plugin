@@ -411,7 +411,9 @@ double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeFor
     hasCreatedKernels = true;
     executeInitKernels(context, includeForces, includeEnergy);
   }
-  if(version == 1){
+  if(version == 0){
+    energy = executeGVolSA(context, includeForces, includeEnergy);
+  }else if(version == 1){
     energy = executeAGBNP1(context, includeForces, includeEnergy);
   }else if(version == 2){
     energy = executeAGBNP2(context, includeForces, includeEnergy);
@@ -1927,6 +1929,250 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
 }
 
 
+double OpenCLCalcAGBNPForceKernel::executeGVolSA(ContextImpl& context, bool includeForces, bool includeEnergy) {
+  OpenCLNonbondedUtilities& nb = cl.getNonbondedUtilities();
+  bool useLong = cl.getSupports64BitGlobalAtomics();
+  bool verbose = verbose_level > 0;
+  niterations += 1;
+
+  if(verbose) cout << "Executing GVolSA" << endl;
+
+  bool nb_reassign = false;
+  if(useCutoff){
+    if(maxTiles < nb.getInteractingTiles().getSize()) {
+      maxTiles = nb.getInteractingTiles().getSize();
+      nb_reassign = true;
+    }
+  }
+  
+  //------------------------------------------------------------------------------------------------------------
+  // Tree construction
+  //  
+  if(verbose_level > 2) cout << "Executing resetTreeKernel" << endl;
+  //here workgroups cycle through tree sections to reset the tree section
+  cl.executeKernel(resetTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing resetBufferKernel" << endl;
+  // resets either ovAtomBuffer and long energy buffer
+  cl.executeKernel(resetBufferKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing InitOverlapTreeKernel_1body_1" << endl;
+  //fills up tree with 1-body overlaps
+  cl.executeKernel(InitOverlapTreeKernel_1body_1, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  // compute numbers of 2-body overlaps, that is children counts of 1-body overlaps
+  if(verbose_level > 2) cout << "Executing InitOverlapTreeCountKernel" << endl;
+  if(nb_reassign){
+    int index = InitOverlapTreeCountKernel_first_nbarg;
+    cl::Kernel kernel = InitOverlapTreeCountKernel;
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractingTiles().getDeviceBuffer());
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractionCount().getDeviceBuffer());
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractingAtoms().getDeviceBuffer());
+    kernel.setArg<cl_uint>(index++, nb.getInteractingTiles().getSize());
+    kernel.setArg<cl::Buffer>(index++, nb.getExclusionTiles().getDeviceBuffer());
+  }
+  cl.executeKernel(InitOverlapTreeCountKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing reduceovCountBufferKernel" << endl;
+  // do a prefix sum of 2-body counts to compute children start indexes to store 2-body overlaps computed by InitOverlapTreeKernel below
+  cl.executeKernel(reduceovCountBufferKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 4){
+    float self_volume = 0.0;
+    vector<cl_float> self_volumes(total_tree_size);
+    vector<cl_float> volumes(total_tree_size);
+    vector<cl_float> energies(total_tree_size);
+    vector<cl_float> gammas(total_tree_size);
+    vector<cl_int> last_atom(total_tree_size);
+    vector<cl_int> level(total_tree_size);
+    vector<cl_int> parent(total_tree_size);
+    vector<cl_int> children_start_index(total_tree_size);
+    vector<cl_int> children_count(total_tree_size);
+    vector<cl_int> children_reported(total_tree_size);
+    vector<mm_float4> g(total_tree_size);
+    vector<mm_float4> dv2(total_tree_size);
+    vector<mm_float4> dv1(total_tree_size);
+    vector<cl_float> sfp(total_tree_size);
+    vector<int> size(num_sections);
+    vector<int> tree_pointer_t(num_sections);
+    vector<cl_int> processed(total_tree_size);
+    vector<cl_int> oktoprocess(total_tree_size);
+
+
+    ovSelfVolume->download(self_volumes);
+    ovVolume->download(volumes);
+    ovVolEnergy->download(energies);
+    ovLevel->download(level);
+    ovLastAtom->download(last_atom);
+    ovRootIndex->download(parent);
+    ovChildrenStartIndex->download(children_start_index);
+    ovChildrenCount->download(children_count);
+    ovChildrenReported->download(children_reported);
+    ovG->download(g);
+    ovGamma1i->download(gammas);
+    ovDV1->download(dv1);
+    ovDV2->download(dv2);
+    ovVSfp->download(sfp);
+    ovAtomTreeSize->download(size);
+    ovTreePointer->download(tree_pointer_t);
+    ovProcessedFlag->download(processed);
+    ovOKtoProcessFlag->download(oktoprocess);
+
+
+
+    std::cout << "Tree:" << std::endl;
+    for(int section = 0; section < num_sections; section++){
+      std::cout << "Tree for sections: " << section << " " << " size= " << size[section] << std::endl;
+      int pp = tree_pointer_t[section];
+      int np = padded_tree_size[section];
+      //self_volume += self_volumes[pp];
+      std::cout << "slot level LastAtom parent ChStart ChCount SelfV V gamma Energy a x y z dedx dedy dedz sfp processed ok2process children_reported" << endl;
+      for(int i = pp; i < pp + np ; i++){
+	int maxprint = pp + 1024;
+	if(i<maxprint){
+	  std::cout << std::setprecision(4) << std::setw(6) << i << " "  << std::setw(7) << (int)level[i] << " " << std::setw(7) << (int)last_atom[i] << " " << std::setw(7) << (int)parent[i] << " "  << std::setw(7) << (int)children_start_index[i] << " " << std::setw(7) <<  (int)children_count[i] << " " << std::setw(15) << (float)self_volumes[i] << " " << std::setw(10) << (float)volumes[i]  << " " << std::setw(10) << (float)gammas[i] << " " << std::setw(10) << (float)energies[i] << " " << std::setw(10) << g[i].w << " " << std::setw(10) << g[i].x << " " << std::setw(10) << g[i].y << " " << std::setw(10) << g[i].z << " " << std::setw(10) << dv2[i].x << " " << std::setw(10) << dv2[i].y << " " << std::setw(10) << dv2[i].z << " " << std::setw(10) << sfp[i] << " " << processed[i] << " " << oktoprocess[i] << " " << children_reported[i] << std::endl;
+	}
+      }
+    }
+    //std::cout << "Volume (from self volumes):" << self_volume <<std::endl;
+  }
+
+  
+  if(verbose_level > 2) cout << "Executing InitOverlapTreeKernel" << endl;
+  if(nb_reassign){
+    int index = InitOverlapTreeKernel_first_nbarg;
+    cl::Kernel kernel = InitOverlapTreeKernel;
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractingTiles().getDeviceBuffer());
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractionCount().getDeviceBuffer());
+    kernel.setArg<cl::Buffer>(index++, nb.getInteractingAtoms().getDeviceBuffer());
+    kernel.setArg<cl_uint>(index++, nb.getInteractingTiles().getSize());
+    kernel.setArg<cl::Buffer>(index++, nb.getExclusionTiles().getDeviceBuffer());
+  }
+  cl.executeKernel(InitOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing resetComputeOverlapTreeKernel" << endl;
+  cl.executeKernel(resetComputeOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing ComputeOverlapTree_1passKernel" << endl;
+  cl.executeKernel(ComputeOverlapTree_1passKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+  //------------------------------------------------------------------------------------------------------------
+
+
+  //------------------------------------------------------------------------------------------------------------
+  // Volume energy function 1
+  //
+  if(verbose_level > 2) cout << "Executing resetSelfVolumesKernel" << endl;
+  cl.executeKernel(resetSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing computeSelfVolumesKernel" << endl;
+  cl.executeKernel(computeSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+
+  if(verbose_level > 2) cout << "Executing reduceSelfVolumesKernel_buffer" << endl;
+  cl.executeKernel(reduceSelfVolumesKernel_buffer, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+
+  
+  if(false){
+    vector<int> size(num_sections);
+    vector<int> niter(num_sections);
+    ovAtomTreeSize->download(size);
+    cout << "Sizes: ";
+    for(int section = 0; section < num_sections; section++){
+      std::cout << size[section] << " ";
+    }
+    std::cout << endl;
+    NIterations->download(niter);
+    cout << "Niter: ";
+    for(int section = 0; section < num_sections; section++){
+      std::cout << niter[section] << " ";
+    }
+    std::cout << endl;
+
+  }
+
+
+  
+  if(verbose){
+    vector<int> atom_pointer(cl.getPaddedNumAtoms());
+    vector<float> vol_energies(total_tree_size);
+    ovAtomTreePointer->download(atom_pointer);
+    ovVolEnergy->download(vol_energies);
+    double energy = 0;
+    for(int i=0;i<numParticles;i++){
+      int slot = atom_pointer[i];
+      energy += vol_energies[slot];
+    }
+    cout << "Volume Energy 1:" << energy << endl;
+  }
+
+
+
+  //------------------------------------------------------------------------------------------------------------
+  //------------------------------------------------------------------------------------------------------------
+  // Self volumes, volume scaling parameters,
+  // volume energy function 2, surface area cavity energy function
+  //
+
+  //seeds tree with "negative" gammas and reduced radi
+  if(verbose_level > 2) cout << "Executing InitOverlapTreeKernel_1body_2 " << endl;
+  cl.executeKernel(InitOverlapTreeKernel_1body_2, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing ResetRescanOverlapTreeKernel" << endl;
+  cl.executeKernel(ResetRescanOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+  
+  if(verbose_level > 2) cout << "Executing InitRescanOverlapTreeKernel" << endl;
+  cl.executeKernel(InitRescanOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+  
+  if(verbose_level > 2) cout << "Executing RescanOverlapTreeKernel" << endl;
+  cl.executeKernel(RescanOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+  
+  if(verbose_level > 2) cout << "Executing resetSelfVolumesKernel" << endl;
+  cl.executeKernel(resetSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  if(verbose_level > 2) cout << "Executing resetBufferKernel" << endl;
+  // zero self-volume accumulator
+  cl.executeKernel(resetBufferKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+  
+  if(verbose_level > 2) cout << "Executing computeSelfVolumesKernel" << endl;
+  cl.executeKernel(computeSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  //update energyBuffer with volume energy 2
+  if(verbose_level > 2) cout << "Executing reduceSelfVolumesKernel_buffer" << endl;
+  cl.executeKernel(reduceSelfVolumesKernel_buffer, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+
+  if(verbose){
+    //print self volumes
+    vector<float> self_volumes(cl.getPaddedNumAtoms());
+    selfVolume->download(self_volumes);
+    for(int i=0;i<numParticles;i++){
+      cout << "self_volume:" << i << "  " << self_volumes[i] << endl;
+    }
+  }
+
+
+  if(verbose){
+    vector<int> atom_pointer(cl.getPaddedNumAtoms());
+    vector<float> vol_energies(total_tree_size);
+    ovAtomTreePointer->download(atom_pointer);
+    ovVolEnergy->download(vol_energies);
+    double energy = 0;
+    for(int i=0;i<numParticles;i++){
+      int slot = atom_pointer[i];
+      energy += vol_energies[slot];
+    }
+    cout << "Volume Energy 2:" << energy << endl;
+  }
+
+  
+  if(verbose_level > 2) cout << "Done with GVolSA" << endl;
+
+  return 0.0;
+}
+
+
+
 double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool includeForces, bool includeEnergy) {
   OpenCLNonbondedUtilities& nb = cl.getNonbondedUtilities();
   bool useLong = cl.getSupports64BitGlobalAtomics();
@@ -2497,7 +2743,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   }
 #endif
 
-  if(verbose_level > 2) cout << "Done with GVolSA energy" << endl;
+  if(verbose_level > 2) cout << "Done with AGBNP1" << endl;
 
   return 0.0;
 }
@@ -3153,7 +3399,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool incl
   }
 #endif
 
-  if(verbose_level > 2) cout << "Done with GVolSA energy" << endl;
+  if(verbose_level > 2) cout << "Done with AGBNP2" << endl;
 
   return 0.0;
 }

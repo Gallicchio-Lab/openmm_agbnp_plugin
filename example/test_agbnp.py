@@ -13,7 +13,14 @@ start=datetime.now()
 #testDes = DesmondDMSFile('1li2_agbnp1.dms')
 shutil.copyfile('trpcage.dms','trpcage_2.dms')
 testDes = DesmondDMSFile('trpcage_2.dms')
+
+#AGBNP1
 system = testDes.createSystem(nonbondedMethod=NoCutoff, OPLS = True, implicitSolvent='AGBNP')
+
+#GVolSA
+#system = testDes.createSystem(nonbondedMethod=NoCutoff, OPLS = True, implicitSolvent='GVolSA')
+
+#with cutoffs
 #system = testDes.createSystem(nonbondedMethod=CutoffNonPeriodic,nonbondedCutoff=1*nanometer, OPLS = True, implicitSolvent='AGBNP')
 
 

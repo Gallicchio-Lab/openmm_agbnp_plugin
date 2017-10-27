@@ -365,32 +365,10 @@ class DesmondDMSFile(object):
                     print('Warning: AGBNP3 is not supported in this version')
                 
             if implicitSolvent is 'GVolSA':
-                #load Gaussvol plugin if available
-                try:
-                    from GVolplugin import GVolForce
-                    GVolEnabled = True
-                except ImportError:
-                    GVolEnabled = False
-                #sets up GVol
-                if GVolEnabled:
-                    gb_parms = self._get_agbnp2_params()
-                    if gb_parms:
-                        print('Adding GVol force ...')
-                        gb = GVolForce()
-                        gb.setNonbondedMethod(methodMap[nonbondedMethod])
-                        gb.setCutoffDistance(nonbondedCutoff)
-                        # add particles
-                        for i in range(len(gb_parms)):
-                            [radiusN,chargeN,gammaN,alphaN,hbtype,hbwN,ishydrogenN] = gb_parms[i]
-                            h_flag = ishydrogenN > 0
-                            Roffset = 0.05;
-                            radiusN += Roffset;
-                            gb.addParticle(radiusN, gammaN, h_flag)
-                            #print "Adding", radiusN, gammaN, h_flag
-                        sys.addForce(gb)
-                        print "Done"
-                else:
-                    print('Warning: GVol is not supported in this version')
+                #implemented as AGBNP version 0
+                implicitSolvent = 'AGBNP'
+                AGBNPVersion = 0
+                print('Using GVolSA')
 
             if implicitSolvent is 'AGBNP':
                 #load AGBNP plugin if available

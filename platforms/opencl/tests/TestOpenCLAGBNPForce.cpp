@@ -29,7 +29,7 @@ void testForce() {
     System system;
     NonbondedForce *nb = new NonbondedForce(); //needed to set up force buffers
     AGBNPForce* force = new AGBNPForce();
-    force->setVersion(1); 
+    force->setVersion(0); 
     system.addForce(nb); 
     system.addForce(force);
     //read from stdin

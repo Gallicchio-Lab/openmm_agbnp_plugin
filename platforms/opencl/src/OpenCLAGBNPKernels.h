@@ -262,6 +262,7 @@ private:
     int verbose_level;
 
     void executeInitKernels(ContextImpl& context, bool includeForces, bool includeEnergy);
+    double executeGVolSA(ContextImpl& context, bool includeForces, bool includeEnergy);
     double executeAGBNP1(ContextImpl& context, bool includeForces, bool includeEnergy);
     double executeAGBNP2(ContextImpl& context, bool includeForces, bool includeEnergy); 
 

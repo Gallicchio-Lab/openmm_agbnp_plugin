@@ -38,6 +38,17 @@ void AGBNPForce::setCutoffDistance(double distance) {
     cutoffDistance = distance;
 }
 
+
+// version number: AGBNP version 1 or 2, version 0 is GVolSA
+void AGBNPForce::setVersion(int agbnp_version){
+  unsigned int max_version = 2;
+  if(agbnp_version >= 0 && agbnp_version <= max_version) {
+    version = agbnp_version;
+  }else{
+    throw OpenMMException("AGBNPForce::setVersion(): illegal version number");
+  }
+}
+
 void AGBNPForce::getParticleParameters(int index,  double& radius, double& gamma, double &vdw_alpha, double &charge,
 				      bool& ishydrogen) const { 
 

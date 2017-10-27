@@ -97,10 +97,8 @@ public:
 
     void updateParametersInContext(OpenMM::Context& context);
 
-    void setVersion(unsigned int agbnp_version){
-      unsigned int max_version = 2;
-      if(agbnp_version > 0 && agbnp_version <= max_version) version = agbnp_version;
-    }
+    // version number: AGBNP version 1 or 2, version 0 is GVolSA
+    void setVersion(int agbnp_version);
 
     unsigned int getVersion() const {
       return version;

@@ -85,7 +85,8 @@ private:
     std::vector<RealOpenMM> inverse_born_radius;
     std::vector<RealOpenMM> inverse_born_radius_fp;
     std::vector<RealOpenMM> born_radius;
-
+    
+    double executeGVolSA(OpenMM::ContextImpl& context, bool includeForces, bool includeEnergy);
     double executeAGBNP1(OpenMM::ContextImpl& context, bool includeForces, bool includeEnergy);
     double executeAGBNP2(OpenMM::ContextImpl& context, bool includeForces, bool includeEnergy);
     
