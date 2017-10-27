@@ -2,7 +2,11 @@
 
 A plugin that implements the AGBNP1 implicit solvent model [1] for OpenMM.
 
-The plugin supports the OpenCL and Reference platforms. Implementation of the AGBNP2 model [2] is in progress.
+The plugin supports the OpenCL and Reference platforms.
+
+This implementation continues the support for the GaussVol model [3], previously maintained [here](https://github.com/egallicc/openmm_gaussvol_plugin).
+
+Implementation of the AGBNP2 model [2] is in progress.
 
 Emilio Gallicchio <egallicchio@brooklyn.cuny.edu>
 Last Modified: October 2017
