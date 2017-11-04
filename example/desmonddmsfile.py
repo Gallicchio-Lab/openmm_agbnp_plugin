@@ -322,15 +322,24 @@ class DesmondDMSFile(object):
                      ff.PME:mm.NonbondedForce.PME}
         nb.setNonbondedMethod(methodMap[nonbondedMethod])
         nb.setCutoffDistance(nonbondedCutoff)
+        nb.setUseDispersionCorrection(False)
         nb.setEwaldErrorTolerance(ewaldErrorTolerance)
         if cnb is not None:
             cnb.setNonbondedMethod(methodMap[nonbondedMethod])
             cnb.setCutoffDistance(nonbondedCutoff)
-        
+            cnb.setUseSwitchingFunction(False)
+            cnb.setUseLongRangeCorrection(False);
+
 	#add implicit solvent model.
 	if implicitSolvent is not None:
 
             print('Adding implicit solvent ...')
+            
+            #with implicit solvent turn off native reaction field
+            #However note that this does not affect the shifted Coulomb potential of the Nonbonded force
+            #(it affects the only the energy, not the forces and equation of motion)
+            nb.setReactionFieldDielectric(1.0)
+            
 
             if implicitSolvent is HCT:
                 gb_parms = self._get_gb_params()
@@ -393,6 +402,8 @@ class DesmondDMSFile(object):
                             gb.addParticle(radiusN, gammaN, alphaN, chargeN, h_flag)
                             #print "Adding", radiusN, gammaN, h_flag
                         sys.addForce(gb)
+                        self.gb_parms = gb_parms
+                        self.agbnp = gb
                         print "Done"
                 else:
                     print('Warning: AGBNP is not supported in this version')
@@ -592,7 +603,7 @@ class DesmondDMSFile(object):
         for charge, sigma, epsilon in self._conn.execute(q):
             if OPLS:
                 epsilon = 0
-            """charge = 0"""
+                """charge = 0"""
             nb.addParticle(charge, sigma*angstrom, epsilon*kilocalorie_per_mole)
 
         for p0, p1 in self._conn.execute('SELECT p0, p1 FROM exclusion'):
@@ -723,3 +734,18 @@ class DesmondDMSFile(object):
 
     def __del__(self):
         self.close()
+
+
+    def turn_off_agbnp_parameters(self, context):
+        try:
+            for i in range(len(self.gb_parms)):
+                [radiusN,chargeN,gammaN,alphaN,hbtype,hbwN,ishydrogenN] = self.gb_parms[i]
+                h_flag = ishydrogenN > 0
+                gammaN = 0.0;
+                alphaN = 0.0;
+                chargeN = 0.0;
+                self.agbnp.setParticleParameters(i,radiusN, gammaN, alphaN, chargeN, h_flag)
+            self.agbnp.updateParametersInContext(context)
+        except:
+            print("error turning off agbnp parameters")
+            return
