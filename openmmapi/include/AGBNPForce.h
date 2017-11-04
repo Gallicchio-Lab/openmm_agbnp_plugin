@@ -55,6 +55,19 @@ public:
     int addParticle(double radius, double gamma, double vdw_alpha, double charge, bool ishydrogen);
 
     /**
+     * Modify the parameters of a particle to AGBNP
+     *
+     * @param index       the index of the particle
+     * @param radius      the van der Waals radius of the particle, measured in nm
+     * @param gamma       the surface tension parameter, measured in kJ/mol/nm^2
+     * @param vdw_alpha   van der Waals solute-solvent interaction energy parameter
+     * @param charge      electrostatic charge
+     * @param ishydrogen  if true, this particle is a hydrogen atom (does not contribute to volume)
+     * @return the index of the particle that was added
+     */
+    void setParticleParameters(int index, double radius, double gamma, double vdw_alpha, double charge, bool ishydrogen);
+    
+    /**
      * Get the AGBNP parameters for a particle
      * 
      * @param index       the index of the particle

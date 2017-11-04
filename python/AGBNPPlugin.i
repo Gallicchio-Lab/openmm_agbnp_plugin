@@ -55,6 +55,8 @@ public:
 
     void addParticle(double radius, double gamma, double alpha, double charge, bool ishydrogen);
 
+    void setParticleParameters(int index, double radius, double gamma, double alpha, double charge, bool ishydrogen);
+    
     void updateParametersInContext(OpenMM::Context& context);
 
     void setCutoffDistance(double distance);

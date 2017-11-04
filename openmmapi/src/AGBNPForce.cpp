@@ -21,6 +21,15 @@ int AGBNPForce::addParticle(double radius, double gamma, double vdw_alpha, doubl
   return particles.size()-1;
 }
 
+void AGBNPForce::setParticleParameters(int index, double radius, double gamma, double vdw_alpha, double charge, bool ishydrogen){
+  ASSERT_VALID_INDEX(index, particles);
+  particles[index].radius = radius;
+  particles[index].radius;
+  particles[index].gamma = gamma;
+  particles[index].vdw_alpha = vdw_alpha;
+  particles[index].charge = charge;
+  particles[index].ishydrogen = ishydrogen;
+}
 
 AGBNPForce::NonbondedMethod AGBNPForce::getNonbondedMethod() const {
     return nonbondedMethod;

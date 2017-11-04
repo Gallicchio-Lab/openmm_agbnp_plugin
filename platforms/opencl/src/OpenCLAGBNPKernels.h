@@ -95,6 +95,8 @@ private:
     bool hasCreatedKernels;
     OpenMM::OpenCLContext& cl;
     const OpenMM::System& system;
+
+
     OpenMM::OpenCLArray* radiusParam1;
     OpenMM::OpenCLArray* radiusParam2;
     OpenMM::OpenCLArray* gammaParam1;
@@ -102,8 +104,18 @@ private:
     OpenMM::OpenCLArray* ishydrogenParam;
     OpenMM::OpenCLArray* chargeParam;
     OpenMM::OpenCLArray* alphaParam;
-    OpenMM::OpenCLArray* testBuffer;
 
+    //C++ vectors corresponding to parameter buffers above
+    vector<cl_float> radiusVector1; //enlarged radii
+    vector<cl_float> radiusVector2; //vdw radii
+    vector<cl_float> gammaVector1;  //gamma/radius_offset
+    vector<cl_float> gammaVector2;  //-gamma/radius_offset
+    vector<cl_float> chargeVector;  //charge
+    vector<cl_float> alphaVector;   //alpha vdw parameter
+    vector<cl_int> ishydrogenVector;
+
+    OpenMM::OpenCLArray* testBuffer;
+    
     OpenMM::OpenCLArray* radtypeScreened;
     OpenMM::OpenCLArray* radtypeScreener;
     

@@ -75,7 +75,6 @@ void ReferenceCalcAGBNPForceKernel::initialize(const System& system, const AGBNP
     surface_areas.resize(numParticles);
     vol_force.resize(numParticles);
     
-    double ang2nm = 0.1;
     vector<double> vdwrad(numParticles);
     for (int i = 0; i < numParticles; i++){
       double r, g, alpha, q;
@@ -998,12 +997,22 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
 
 
 void ReferenceCalcAGBNPForceKernel::copyParametersToContext(ContextImpl& context, const AGBNPForce& force) {
-  std::vector<int> neighbors;
-    if (force.getNumParticles() != numParticles)
-        throw OpenMMException("updateParametersInContext: The number of AGBNP particles has changed");
-    for (int i = 0; i < force.getNumParticles(); i++) {
-      double r, g, alpha, q;
-      bool h;
-      force.getParticleParameters(i, r, g, alpha, q, h);
+  if (force.getNumParticles() != numParticles)
+    throw OpenMMException("updateParametersInContext: The number of AGBNP particles has changed");
+
+  for (int i = 0; i < numParticles; i++){
+    double r, g, alpha, q;
+    bool h;
+    force.getParticleParameters(i, r, g, alpha, q, h);
+    if(pow(radii_vdw[i]-r,2) > 1.e-6){
+      throw OpenMMException("updateParametersInContext: AGBNP plugin does not support changing atomic radii.");
     }
+    if(ishydrogen[i] != h){
+      throw OpenMMException("updateParametersInContext: AGBNP plugin does not support changing heavy/hydrogen atoms.");
+    }
+    gammas[i] = g;
+    if(h) gammas[i] = 0.0;
+    vdw_alpha[i] = alpha;
+    charge[i] = q;
+  }
 }

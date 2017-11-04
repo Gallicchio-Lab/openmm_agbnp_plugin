@@ -294,9 +294,10 @@ void OpenCLCalcAGBNPForceKernel::initialize(const System& system, const AGBNPFor
     version = force.getVersion();
     if(verbose_level > 0)
       cout << "OpenCLCalcAGBNPForceKernel::initialize(): AGBNP version " << version << endl;
-    
+
+    //we do not support multiple contexts(?), is it the same as multiple devices?
     if (cl.getPlatformData().contexts.size() > 1)
-      throw OpenMMException("AGBNPForce does not support using multiple OpenCL devices");
+      throw OpenMMException("AGBNPForce does not support using multiple contexts");
     
     OpenCLNonbondedUtilities& nb = cl.getNonbondedUtilities();
     int elementSize = (cl.getUseDoublePrecision() ? sizeof(cl_double) : sizeof(cl_float));   
@@ -323,13 +324,13 @@ void OpenCLCalcAGBNPForceKernel::initialize(const System& system, const AGBNPFor
 
     //cl.addAutoclearBuffer(*ovAtomBuffer);
 
-    vector<cl_float> radiusVector1(cl.getPaddedNumAtoms());
-    vector<cl_float> radiusVector2(cl.getPaddedNumAtoms());
-    vector<cl_float> gammaVector1(cl.getPaddedNumAtoms());
-    vector<cl_float> gammaVector2(cl.getPaddedNumAtoms());
-    vector<cl_float> chargeVector(cl.getPaddedNumAtoms());
-    vector<cl_float> alphaVector(cl.getPaddedNumAtoms());
-    vector<cl_int> ishydrogenVector(cl.getPaddedNumAtoms());
+    radiusVector1.resize(cl.getPaddedNumAtoms());
+    radiusVector2.resize(cl.getPaddedNumAtoms());
+    gammaVector1.resize(cl.getPaddedNumAtoms());
+    gammaVector2.resize(cl.getPaddedNumAtoms());
+    chargeVector.resize(cl.getPaddedNumAtoms());
+    alphaVector.resize(cl.getPaddedNumAtoms());
+    ishydrogenVector.resize(cl.getPaddedNumAtoms());
     atom_ishydrogen.resize(cl.getPaddedNumAtoms());
     vector<double> vdwrad(numParticles);
     for (int i = 0; i < numParticles; i++) {
@@ -3405,27 +3406,32 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool incl
 }
 
 void OpenCLCalcAGBNPForceKernel::copyParametersToContext(ContextImpl& context, const AGBNPForce& force) {
-    int numContexts = cl.getPlatformData().contexts.size();
-    int startIndex = cl.getContextIndex()*force.getNumParticles()/numContexts;
-    int endIndex = (cl.getContextIndex()+1)*force.getNumParticles()/numContexts;
-    if (numParticles != endIndex-startIndex)
-        throw OpenMMException("updateParametersInContext: The number of bonds has changed");
+    if (force.getNumParticles() != numParticles){
+        cout << force.getNumParticles() << " != " << numParticles << endl; //Debug
+        throw OpenMMException("copyParametersToContext: AGBNP plugin does not support changing the number of atoms.");
+    }
     if (numParticles == 0)
-        return;
-    
-    // Record the per-bond parameters.
-    
-    //vector<mm_float2> paramVector(numBonds);
-    //for (int i = 0; i < numBonds; i++) {
-    //    int atom1, atom2;
-    //   double length, k;
-    //   force.getBondParameters(startIndex+i, atom1, atom2, length, k);
-    //    paramVector[i] = mm_float2((cl_float) length, (cl_float) k);
-    // }
-    //params->upload(paramVector);
-    
-    // Mark that the current reordering may be invalid.
-    
-    cl.invalidateMolecules();
+      return;
+    for (int i = 0; i < numParticles; i++) {
+      double radius, gamma, alpha, charge;
+      bool ishydrogen;
+      force.getParticleParameters(i, radius, gamma, alpha, charge, ishydrogen);
+      if(pow(radiusVector2[i]-radius,2) > 1.e-6){
+	throw OpenMMException("updateParametersInContext: AGBNP plugin does not support changing atomic radii.");
+      }
+      int h = ishydrogen ? 1 : 0;
+      if(ishydrogenVector[i] != h ){
+	throw OpenMMException("updateParametersInContext: AGBNP plugin does not support changing heavy/hydrogen atoms.");
+      }
+      double g = ishydrogen ? 0 : gamma/SA_DR;
+      gammaVector1[i] = (cl_float)  g; 
+      gammaVector2[i] = (cl_float) -g;
+      alphaVector[i] =  (cl_float) alpha;
+      chargeVector[i] = (cl_float) charge;
+    }
+    gammaParam1->upload(gammaVector1);
+    gammaParam2->upload(gammaVector2);
+    alphaParam->upload(alphaVector);
+    chargeParam->upload(chargeVector);
 }
 
