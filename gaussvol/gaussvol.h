@@ -89,6 +89,7 @@ class GOverlap {
     int parent_index;              // index in tree list of parent overlap
     int children_startindex;       // start index in tree array of children
     int children_count;            // number of children
+    void print_overlap(void);
 };
 
 
@@ -96,6 +97,7 @@ class GOverlap_Tree {
  public:
   int natoms;
   vector<GOverlap> overlaps; //the root is at index 0, atoms are at 1..natoms+1
+  void print_tree(void);
 };
 
 class GaussVol {
@@ -147,12 +149,13 @@ class GaussVol {
 		       vector<RealVec> &force,
 		       vector<RealOpenMM> &surface_areas);
 
-
-
-
   // returns number of overlaps for each atom 
   void getstat(vector<int>& nov, vector<int>& nov_2body);
 
+  void print_tree(void){
+    tree.print_tree();
+  }
+  
  private:
   GOverlap_Tree tree;
   vector<RealOpenMM> radius1;

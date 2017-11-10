@@ -217,6 +217,9 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool i
     gvol->set_radii(radii_large);
     gvol->set_gammas(nu);
     gvol->compute_tree(pos);
+    if(verbose_level > 4){
+      gvol->print_tree();
+    }
     gvol->compute_volume(pos, volume1, vol_energy1, vol_force, free_volume, self_volume);
     
     //returns energy and gradients from volume energy function

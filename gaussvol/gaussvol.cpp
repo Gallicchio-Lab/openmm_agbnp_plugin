@@ -175,11 +175,10 @@ static int add_children(GOverlap_Tree &tree, int parent_index, vector<GOverlap> 
   root->children_startindex = start_index;
   root->children_count = noverlaps;
 
-  /* if 2-body sort neighbors by overlap volume */
+  /* sort neighbors by overlap volume */
   if(root->level == 1){
     sort(children_overlaps.begin(), children_overlaps.end(), goverlap_compare);
-   }
-
+  }
 
   int root_level = root->level;
 
@@ -602,6 +601,26 @@ static void test_gaussian(GOverlap_Tree &tree){
   }
 }
 
+
+void GOverlap::print_overlap(void){
+  cout << level << " " << atom << " " << parent_index << " " <<  children_startindex << " " << children_count << " " << self_volume << " " << volume << " " << gamma1i << " " << g.a << " " << g.c[0] << " " <<  g.c[1] << " " <<  g.c[2] << " " <<  dv1[0] << " " << dv1[1] << " " << dv1[2] << " " << sfp << endl;
+}
+
+static void print_tree_r(vector<GOverlap> &overlaps, int slot){
+  GOverlap &ov = overlaps[slot];
+  std::cout << "t: " << slot << " ";
+  ov.print_overlap();
+  for(int i=ov.children_startindex ; i < ov.children_startindex+ ov.children_count; i++){
+    print_tree_r(overlaps, i);
+  }
+}
+
+void GOverlap_Tree::print_tree(void){
+  std::cout << "slot level LastAtom parent ChStart ChCount SelfV V gamma a x y z dedx dedy dedz sfp" << std::endl;
+  for(int i=1;i<= natoms ; i++){
+    print_tree_r(overlaps, i);
+  }
+}
 
 
 GaussVol::GaussVol(const int natoms, vector<RealOpenMM> &radii, 
