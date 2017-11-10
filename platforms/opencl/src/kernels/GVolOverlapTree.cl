@@ -241,24 +241,26 @@ __kernel void InitOverlapTreeCount(
 #endif    
 
     uint atom1 = y*TILE_SIZE + tgx;
-#ifndef USE_CUTOFF
-    //the parent is taken as the atom with the smaller index, w/o cutoffs atom1 < atom2 because y<x
-    int parent_slot = ovAtomTreePointer[atom1];
-#endif
-    
+
     // Load atom data for this tile.
+    int tree_pointer1 = ovAtomTreePointer[atom1];
+#ifndef USE_CUTOFF
+    //the parent is taken as the atom with the smaller index: w/o cutoffs atom1 < atom2 because y<x
+    int parent_slot = tree_pointer1;
+#endif
     real4 posq1 = posq[atom1];
     real a1 = global_gaussian_exponent[atom1];
     real v1 = global_gaussian_volume[atom1];
 
+    
 #ifdef USE_CUTOFF
-    //uint j = (iat < jat) ? jat : iat;
     uint j = interactingAtoms[pos*TILE_SIZE + tgx];
     atomIndices[get_local_id(0)] = j;
     if(j<PADDED_NUM_ATOMS){
       localData[localAtomIndex].posq = posq[j];
       localData[localAtomIndex].g.w = global_gaussian_exponent[j];
       localData[localAtomIndex].v = global_gaussian_volume[j];
+      localData[localAtomIndex].tree_pointer = ovAtomTreePointer[j];
     }
 #else
     uint j = x*TILE_SIZE + tgx;
@@ -280,6 +282,7 @@ __kernel void InitOverlapTreeCount(
       real v2 = localData[localAtom2Index].v;
 #ifdef USE_CUTOFF
       int atom2 = atomIndices[localAtom2Index];
+      int tree_pointer2 =  localData[localAtom2Index].tree_pointer;
 #else
       int atom2 = x*TILE_SIZE + tj;
 #endif
@@ -293,7 +296,7 @@ __kernel void InitOverlapTreeCount(
       if (compute){
 #ifdef USE_CUTOFF
 	//the parent is taken as the atom with the smaller index
-	int parent_slot = (atom1 < atom2) ? ovAtomTreePointer[atom1] : ovAtomTreePointer[atom2];
+	int parent_slot = (atom1 < atom2) ? tree_pointer1 : tree_pointer2;
 #endif
 	COMPUTE_INTERACTION_COUNT
       }
@@ -610,16 +613,14 @@ __kernel void InitOverlapTree(
 #endif
     
     uint atom1 = y*TILE_SIZE + tgx;
-#ifndef USE_CUTOFF
-    //the parent is taken as the atom with the smaller index, w/o cutoffs atom1 < atom2 because y<x
-    int parent_slot = ovAtomTreePointer[atom1];
-    int parent_children_start = ovChildrenStartIndex[parent_slot];
-#endif
-    
-    //int atom1_tree_ptr = ovAtomTreePointer[atom1];
-    //int atom1_children_start = ovChildrenStartIndex[atom1_tree_ptr];
 
     // Load atom data for this tile.
+    int tree_pointer1 = ovAtomTreePointer[atom1];
+#ifndef USE_CUTOFF
+    //the parent is taken as the atom with the smaller index: w/o cutoffs atom1 < atom2 because y<x
+    int parent_slot = tree_pointer1;
+    int parent_children_start = ovChildrenStartIndex[parent_slot];
+#endif
     real4 posq1 = posq[atom1];
     LOAD_ATOM1_PARAMETERS
 
@@ -628,6 +629,7 @@ __kernel void InitOverlapTree(
     atomIndices[get_local_id(0)] = j;
     if(j<PADDED_NUM_ATOMS){
 	localData[localAtomIndex].posq = posq[j];
+	localData[localAtomIndex].tree_pointer = ovAtomTreePointer[j];
 	LOAD_LOCAL_PARAMETERS_FROM_GLOBAL
     }
 #else
@@ -649,6 +651,7 @@ __kernel void InitOverlapTree(
       LOAD_ATOM2_PARAMETERS
 #ifdef USE_CUTOFF
       int atom2 = atomIndices[localAtom2Index];
+      int tree_pointer2 = localData[localAtom2Index].tree_pointer;
 #else
       int atom2 = x*TILE_SIZE + tj;
 #endif
@@ -663,10 +666,10 @@ __kernel void InitOverlapTree(
 #ifdef USE_CUTOFF
 	//the parent is taken as the atom with the smaller index
 	bool ordered = atom1 < atom2;
-	int parent_slot = (ordered) ? ovAtomTreePointer[atom1] : ovAtomTreePointer[atom2];
+	int parent_slot = (ordered) ? tree_pointer1 : tree_pointer2;
+	int parent_children_start = ovChildrenStartIndex[parent_slot];
 	int child_atom = (ordered) ? atom2 : atom1 ;
 	if(!ordered) delta = -delta; //parent and child are reversed (atom2>atom1)
-	int parent_children_start = ovChildrenStartIndex[parent_slot];
 #else
 	int child_atom = atom2;	
 #endif

@@ -757,7 +757,8 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       replacements["ATOM_PARAMETER_DATA"] = 
 	"real4 g; \n"
 	"real  v; \n"
-	"real  gamma; \n";
+	"real  gamma; \n"
+	"int tree_pointer; \n";
 
       replacements["PARAMETER_ARGUMENTS"] = "";
 
