@@ -940,7 +940,16 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
 		"	     These, together with atom2 (last_atom) are entered into the tree for atom 1 if\n"
 		"	     volume is large enough.\n"
 		"	 */\n"
-		"	  int endslot = ovChildrenStartIndex[slot] + ov_count; \n"
+                "        int endslot, children_count;\n"
+                "        if(gvol > SMALL_VOLUME){ \n"
+	        "          //use top counter \n"
+	        "          children_count = ovChildrenCountTop[slot]++; \n"
+		"          endslot = ovChildrenStartIndex[slot] + children_count; \n"
+                "        }else{ \n"
+                "          //use bottom counter \n"
+                "          children_count = ovChildrenCountBottom[slot]++; \n"
+                "          endslot = ovChildrenStartIndex[slot] + ovChildrenCount[slot] - children_count - 1; \n"
+                "        }\n"
 		"	  ovLevel[endslot] = level + 1; //two-body\n"
 		"	  ovVolume[endslot] = gvol;\n"
 	        "         ovVSfp[endslot] = sfp; \n"
@@ -953,7 +962,6 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
 	        "         ovDV1[endslot] = (real4)(-delta.xyz*dgvol,dgvolv);\n"
 	        "         ovProcessedFlag[endslot] = 0;\n"
                 "         ovOKtoProcessFlag[endslot] = 1;\n"
-                "         ov_count += 1; \n"
 		"       }\n";
 
 
@@ -1256,6 +1264,8 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++, ovProcessedFlag->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ovOKtoProcessFlag->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ovChildrenReported->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, ovChildrenCountTop->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, ovChildrenCountBottom->getDeviceBuffer());
 
       //pass 2 (1 pass kernel)
       kernel_name = "ComputeOverlapTree_1pass";
@@ -1289,7 +1299,8 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++, ovProcessedFlag->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ovOKtoProcessFlag->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ovChildrenReported->getDeviceBuffer());
-
+      kernel.setArg<cl::Buffer>(index++, ovChildrenCountTop->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, ovChildrenCountBottom->getDeviceBuffer());
       kernel.setArg<cl_int>(index++, temp_buffer_size );
       kernel.setArg<cl::Buffer>(index++,  gvol_buffer_temp->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++,  tree_pos_buffer_temp->getDeviceBuffer());

@@ -1176,8 +1176,10 @@ void ComputeOverlapTree(const int ntrees,
    __global       int*  restrict ovChildrenCount,
    __global volatile int*   restrict ovProcessedFlag,
    __global volatile int*   restrict ovOKtoProcessFlag,
-   __global volatile int*   restrict ovChildrenReported
-   ){
+   __global volatile int*   restrict ovChildrenReported,
+   __global        int*  restrict ovChildrenCountTop,
+   __global        int*  restrict ovChildrenCountBottom
+ ){
 
   const uint local_id = get_local_id(0);
 
@@ -1272,7 +1274,6 @@ void ComputeOverlapTree(const int ntrees,
 	//pass3: compute volumes etc. of children and store them in the tree
 	//starting at ovChildrenStartIndex. Mark the children as okay to process
 	//mark this slot as processed.
-	ov_count = 0;
 	if(letsgo){
 	  // slot of first and last sibling
 	  int count = ovChildrenCount[parent];
@@ -1353,7 +1354,8 @@ __kernel __attribute__((reqd_work_group_size(OV_WORK_GROUP_SIZE,1,1)))
    __global volatile int*   restrict ovProcessedFlag,
    __global volatile int*   restrict ovOKtoProcessFlag,
    __global volatile int*   restrict ovChildrenReported,
-
+   __global        int*  restrict ovChildrenCountTop,
+   __global        int*  restrict ovChildrenCountBottom,
    // temporary buffers
    unsigned const int buffer_size,
    __global       real*  restrict gvol_buffer,
