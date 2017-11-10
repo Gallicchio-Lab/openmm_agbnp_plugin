@@ -5,6 +5,7 @@
 #include <iostream>
 #include <cstdlib>
 #include <cmath>
+#include <cfloat>
 //#include "openmm/reference/SimTKOpenMMRealType.h"
 #include "AGBNPUtils.h"
 #include "ReferenceAGBNPKernels.h"
@@ -76,6 +77,7 @@ void ReferenceCalcAGBNPForceKernel::initialize(const System& system, const AGBNP
     vol_force.resize(numParticles);
     
     vector<double> vdwrad(numParticles);
+    double common_gamma = -1;
     for (int i = 0; i < numParticles; i++){
       double r, g, alpha, q;
       bool h;
@@ -88,6 +90,16 @@ void ReferenceCalcAGBNPForceKernel::initialize(const System& system, const AGBNP
       vdw_alpha[i] = alpha;
       charge[i] = q;
       ishydrogen[i] = h;
+
+      //make sure that all gamma's are the same
+      if(common_gamma < 0 && !h){
+	common_gamma = g; //first occurrence of a non-zero gamma
+      }else{
+	if(g*g > FLT_MIN && pow(common_gamma - g,2) > FLT_MIN){
+	  throw OpenMMException("initialize(): AGBNP does not support multiple gamma values.");
+	}
+      }
+
     }
 
     //create and saves GaussVol instance

@@ -250,7 +250,7 @@ class DesmondDMSFile(object):
 
                 radiusN = length_conv*radius
                 chargeN = charge
-                gammaN = gamma_conv*(igamma+sgamma)
+                gammaN = gamma_conv*(igamma+0.*sgamma)#AGBNP must have only one gamma
                 alphaN = alpha_conv*(ialpha+salpha)
                 # delta parameter is ignored
                 hbtypeN = hbtype
