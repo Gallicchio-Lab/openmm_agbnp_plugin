@@ -1,3 +1,4 @@
+#pragma OPENCL EXTENSION cl_khr_fp64 : enable
 #ifdef SUPPORTS_64_BIT_ATOMICS
 #pragma OPENCL EXTENSION cl_khr_int64_base_atomics : enable
 #endif
@@ -22,7 +23,7 @@ void computeSelfVolumes(const int ntrees,
   __global const real*  restrict ovGamma1i,
   __global const real4* restrict ovG,
   __global       real*  restrict ovSelfVolume,
-  __global       real*  restrict ovVolEnergy,
+  __global       double*  restrict ovVolEnergy,
 
   __global const real4* restrict ovDV1,
   __global       real4* restrict ovDV2,
@@ -97,7 +98,7 @@ void computeSelfVolumes(const int ntrees,
 	  
 	  //"own" volume contribution (volcoeff[level=0] for top root is automatically zero)
 	  real self_volume = volcoeffp*ovVolume[slot];
-	  real energy = volcoeffp*ovGamma1i[slot]*ovVolume[slot];
+	  double energy = volcoeffp*ovGamma1i[slot]*ovVolume[slot];
 	  
 	  //gather self volumes and derivatives from children
 	  //dv.w is the gradient of the energy
@@ -205,7 +206,7 @@ void computeVolumeEnergy(const int ntrees,
   __global const real*  restrict ovVSfp,
   __global const real*  restrict ovGamma1i,
   __global const real4* restrict ovG,
-  __global       real*  restrict ovVolEnergy,
+  __global       double*  restrict ovVolEnergy,
 
   __global const real4* restrict ovDV1,
   __global       real4* restrict ovDV2,
@@ -276,7 +277,7 @@ void computeVolumeEnergy(const int ntrees,
 	  real volcoeffp = level > 0 ? volcoeff/(float)level : 0;
 	  
 	  //"own" volume contribution (volcoeff[level=0] for top root is automatically zero)
-	  real energy = volcoeffp*ovGamma1i[slot]*ovVolume[slot];
+	  double energy = volcoeffp*ovGamma1i[slot]*ovVolume[slot];
 	  
 	  //gather self volumes and derivatives from children
 	  //dv.w is the gradient of the energy

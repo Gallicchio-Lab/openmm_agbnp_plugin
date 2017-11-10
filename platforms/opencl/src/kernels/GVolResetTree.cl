@@ -1,3 +1,4 @@
+#pragma OPENCL EXTENSION cl_khr_fp64 : enable
 #ifdef SUPPORTS_64_BIT_ATOMICS
 #pragma OPENCL EXTENSION cl_khr_int64_base_atomics : enable
 #endif
@@ -77,7 +78,7 @@ void resetTreeSection(
 		      __global       real*  restrict ovVolume,
 		      __global       real*  restrict ovVSfp,
 		      __global       real*  restrict ovSelfVolume,
-		      __global       real*  restrict ovVolEnergy,
+		      __global       double* restrict ovVolEnergy,
 		      __global       int*   restrict ovLastAtom,
 		      __global       int*   restrict ovRootIndex,
 		      __global       int*   restrict ovChildrenStartIndex,
@@ -144,7 +145,7 @@ __kernel void resetTree(const int ntrees,
 			__global       real*  restrict ovVolume,
 			__global       real*  restrict ovVSfp,
 			__global       real*  restrict ovSelfVolume,
-			__global       real*  restrict ovVolEnergy,
+			__global       double*  restrict ovVolEnergy,
 			__global       int*   restrict ovLastAtom,
 			__global       int*   restrict ovRootIndex,
 			__global       int*   restrict ovChildrenStartIndex,

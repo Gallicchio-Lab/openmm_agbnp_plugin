@@ -1,3 +1,4 @@
+#pragma OPENCL EXTENSION cl_khr_fp64 : enable
 #ifdef SUPPORTS_64_BIT_ATOMICS
 #pragma OPENCL EXTENSION cl_khr_int64_base_atomics : enable
 #endif
@@ -12,7 +13,7 @@
 __kernel void reduceSelfVolumes_buffer(int bufferSize, int numBuffers, 
 				       __global const int*   restrict ovAtomTreePointer,
 				       __global const real4* restrict ovAtomBuffer,
-				       __global const  real* restrict ovVolEnergy,
+				       __global const  double* restrict ovVolEnergy,
 
 				       //self volumes
 #ifdef SUPPORTS_64_BIT_ATOMICS
