@@ -312,6 +312,7 @@ class DesmondDMSFile(object):
         self._addImproperHarmonicTorsionsToSystem(sys)
         self._addCMAPToSystem(sys)
         self._addVirtualSitesToSystem(sys)
+        self._addPositionalHarmonicRestraints(sys)
         nb, cnb = self._addNonbondedForceToSystem(sys, OPLS)
         
         # Finish configuring the NonbondedForce.
@@ -672,7 +673,35 @@ class DesmondDMSFile(object):
             raise NotImplementedError('OpenMM does not currently support '
                                       'fdat3-style virtual sites')
 
+    def _addPositionalHarmonicRestraints(self, sys):
+        if not self._hasTable('posre_harm_term'):
+            return
+        if not self._hasTable('posre_harm_param'):
+            raise IOError('DMS file lacks posre_harm_param table even though posre_harm_term tableis present.')
+            return
+        force = mm.CustomExternalForce("hkx*(x-x0)^2+hky*(y-y0)^2+hkz*(z-z0)^2")
+        force.addPerParticleParameter("x0")
+        force.addPerParticleParameter("y0")
+        force.addPerParticleParameter("z0")
+        force.addPerParticleParameter("hkx")
+        force.addPerParticleParameter("hky")
+        force.addPerParticleParameter("hkz")
+        q = """SELECT p0, x0, y0, z0, fcx, fcy, fcz FROM posre_harm_term INNER JOIN posre_harm_param ON posre_harm_term.param=posre_harm_param.id"""
+        nrestraint = 0
+        for p0, x0, y0, z0, fcx, fcy, fcz in self._conn.execute(q):
+            nrestraint += 1
+            x0d = (x0*angstrom).value_in_unit(nanometer)
+            y0d = (y0*angstrom).value_in_unit(nanometer)
+            z0d = (z0*angstrom).value_in_unit(nanometer)
+            hfcxd = (0.5*fcx*kilocalorie_per_mole/angstrom**2).value_in_unit(kilojoule_per_mole/(nanometer**2))
+            hfcyd = (0.5*fcy*kilocalorie_per_mole/angstrom**2).value_in_unit(kilojoule_per_mole/(nanometer**2))
+            hfczd = (0.5*fcz*kilocalorie_per_mole/angstrom**2).value_in_unit(kilojoule_per_mole/(nanometer**2))
+            force.addParticle(p0,[ x0d, y0d, z0d, hfcxd,  hfcyd,  hfczd])
+        if nrestraint > 0:
+            print("Using positional harmonic restraints.")
+            sys.addForce(force)
 
+        
     def _hasTable(self, table_name):
         """Does our DMS file contain this table?
         """
@@ -694,8 +723,6 @@ class DesmondDMSFile(object):
         """Check the file for forcefield terms that are not currenty supported,
         raising a NotImplementedError
         """
-        if 'posre_harm_term' in self._tables:
-            raise NotImplementedError('Position restraints are not implemented.')
         flat_bottom_potential_terms = ['stretch_fbhw_term', 'angle_fbhw_term',
                                        'improper_fbhw_term', 'posre_fbhw_term']
         if any((t in self._tables) for t in flat_bottom_potential_terms):
