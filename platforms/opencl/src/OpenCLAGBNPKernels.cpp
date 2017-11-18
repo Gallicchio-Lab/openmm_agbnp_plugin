@@ -288,7 +288,7 @@ int OpenCLCalcAGBNPForceKernel::copy_tree_to_device(void){
 }
 
 void OpenCLCalcAGBNPForceKernel::initialize(const System& system, const AGBNPForce& force) {
-    verbose_level = 5; 
+    verbose_level = 0; 
 
     //save version
     version = force.getVersion();
@@ -357,7 +357,7 @@ void OpenCLCalcAGBNPForceKernel::initialize(const System& system, const AGBNPFor
 	if(common_gamma < 0 && !ishydrogen){
 	  common_gamma = gamma; //first occurrence of a non-zero gamma
 	}else{
-	  if(gamma*gamma > FLT_MIN && pow(common_gamma - gamma,2) > FLT_MIN){
+	  if(!ishydrogen && pow(common_gamma - gamma,2) > FLT_MIN){
 	    throw OpenMMException("initialize(): AGBNP does not support multiple gamma values.");
 	  }
 	}
@@ -1593,7 +1593,7 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       if(useLong) kernel.setArg<cl::Buffer>(index++, selfVolumeBuffer_long->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, selfVolumeBuffer->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, selfVolume->getDeviceBuffer());
-
+      kernel.setArg<cl::Buffer>(index++, AtomicGamma->getDeviceBuffer());
       int update_energy = 1;
       kernel.setArg<cl_int>(index++, update_energy);
       kernel.setArg<cl::Buffer>(index++, (useLong ? cl.getLongForceBuffer().getDeviceBuffer() : cl.getForceBuffers().getDeviceBuffer())); //master force buffer      
@@ -2260,10 +2260,6 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
     kernel.setArg<cl::Buffer>(index++, nb.getExclusionTiles().getDeviceBuffer());
   }
   cl.executeKernel(InitOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
-
-
-
-  
   
   if(verbose_level > 2) cout << "Executing resetComputeOverlapTreeKernel" << endl;
   cl.executeKernel(resetComputeOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
@@ -2278,17 +2274,12 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   //
   if(verbose_level > 2) cout << "Executing resetSelfVolumesKernel" << endl;
   cl.executeKernel(resetSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
-
-
-  
   
   if(verbose_level > 2) cout << "Executing computeSelfVolumesKernel" << endl;
   cl.executeKernel(computeSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
-
   if(verbose_level > 2) cout << "Executing reduceSelfVolumesKernel_buffer" << endl;
   cl.executeKernel(reduceSelfVolumesKernel_buffer, ov_work_group_size*num_compute_units, ov_work_group_size);
-
 
  if(verbose_level > 4){
     float self_volume = 0.0;
@@ -2343,7 +2334,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
       for(int i = pp; i < pp + np ; i++){
 	int maxprint = pp + 1024;
 	if(i<maxprint){
-	  std::cout << std::setprecision(4) << std::setw(6) << i << " "  << std::setw(7) << (int)level[i] << " " << std::setw(7) << (int)last_atom[i] << " " << std::setw(7) << (int)parent[i] << " "  << std::setw(7) << (int)children_start_index[i] << " " << std::setw(7) <<  (int)children_count[i] << " " << std::setw(15) << (float)self_volumes[i] << " " << std::setw(10) << (float)volumes[i]  << " " << std::setw(10) << (float)gammas[i] << " " << std::setw(10) << (float)energies[i] << " " << std::setw(10) << g[i].w << " " << std::setw(10) << g[i].x << " " << std::setw(10) << g[i].y << " " << std::setw(10) << g[i].z << " " << std::setw(10) << dv2[i].x << " " << std::setw(10) << dv2[i].y << " " << std::setw(10) << dv2[i].z << " " << std::setw(10) << sfp[i] << " " << processed[i] << " " << oktoprocess[i] << " " << children_reported[i] << std::endl;
+	  std::cout << "t: " << std::setprecision(4) << std::setw(6) << i << " "  << std::setw(7) << (int)level[i] << " " << std::setw(7) << (int)last_atom[i] << " " << std::setw(7) << (int)parent[i] << " "  << std::setw(7) << (int)children_start_index[i] << " " << std::setw(7) <<  (int)children_count[i] << " " << std::setw(15) << (float)self_volumes[i] << " " << std::setw(10) << (float)volumes[i]  << " " << std::setw(10) << (float)gammas[i] << " " << std::setw(10) << (float)energies[i] << " " << std::setw(10) << g[i].w << " " << std::setw(10) << g[i].x << " " << std::setw(10) << g[i].y << " " << std::setw(10) << g[i].z << " " << std::setw(10) << dv2[i].x << " " << std::setw(10) << dv2[i].y << " " << std::setw(10) << dv2[i].z << " " << std::setw(10) << sfp[i] << " " << processed[i] << " " << oktoprocess[i] << " " << children_reported[i] << std::endl;
 	}
       }
     }
@@ -2383,7 +2374,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
     ovAtomTreePointer->download(atom_pointer);
     ovVolEnergy->download(vol_energies);
     double energy = 0;
-    for(int i=0;i<numParticles;i++){
+    for(int i=0;i<total_atoms_in_tree;i++){
       int slot = atom_pointer[i];
       energy += vol_energies[slot];
       cout << "EV1: " << i << "  " << vol_energies[slot] << endl;
@@ -2448,7 +2439,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
     ovAtomTreePointer->download(atom_pointer);
     ovVolEnergy->download(vol_energies);
     double energy = 0;
-    for(int i=0;i<numParticles;i++){
+    for(int i=0;i<total_atoms_in_tree;i++){
       int slot = atom_pointer[i];
       energy += vol_energies[slot];
     }

@@ -21,7 +21,7 @@ __kernel void reduceSelfVolumes_buffer(int bufferSize, int numBuffers,
 #endif
 				       __global       real*  restrict selfVolumeBuffer,
 				       __global       real*  restrict selfVolume,
-
+				       __global const real* restrict global_atomic_gamma, //atomic gammas
 				       //energy and forces
 				       int update_energy, 
 #ifdef SUPPORTS_64_BIT_ATOMICS
@@ -58,7 +58,9 @@ __kernel void reduceSelfVolumes_buffer(int bufferSize, int numBuffers,
      // volume energy is stored at the 1-body level
      uint slot = ovAtomTreePointer[atom];
      energyBuffer[id] += ovVolEnergy[slot];
-
+     //alternative to the above, should give the same answer
+     //energyBuffer[atom] += global_atomic_gamma[atom]*selfVolume[atom];
+ 
 #ifdef SUPPORTS_64_BIT_ATOMICS
      // do nothing with forces, they are stored in computeSelfVolumes kernel
 #else

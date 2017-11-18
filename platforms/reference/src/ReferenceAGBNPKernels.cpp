@@ -3,6 +3,7 @@
  * -------------------------------------------------------------------------- */
 
 #include <iostream>
+#include <iomanip>
 #include <cstdlib>
 #include <cmath>
 #include <cfloat>
@@ -95,7 +96,7 @@ void ReferenceCalcAGBNPForceKernel::initialize(const System& system, const AGBNP
       if(common_gamma < 0 && !h){
 	common_gamma = g; //first occurrence of a non-zero gamma
       }else{
-	if(g*g > FLT_MIN && pow(common_gamma - g,2) > FLT_MIN){
+	if(!h && pow(common_gamma - g,2) > FLT_MIN){
 	  throw OpenMMException("initialize(): AGBNP does not support multiple gamma values.");
 	}
       }
@@ -243,6 +244,27 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool i
       cout << "Volume energy 1: " << vol_energy1 << endl;
     }
 
+    //volume scaling factors from self volumes (with small radii)
+    double tot_vol = 0;
+    double vol_energy = 0;
+    for(int i = 0; i < numParticles; i++){
+      RealOpenMM rad = radii_vdw[i];
+      RealOpenMM vol = (4./3.)*M_PI*rad*rad*rad;
+      volume_scaling_factor[i] = self_volume[i]/vol;
+      if(verbose_level > 3){
+	cout << "SV " << i << " " << self_volume[i] << endl;
+      }
+      tot_vol += self_volume[i];
+      vol_energy += nu[i]*self_volume[i];
+    }
+    if(verbose_level > 0){
+      cout << "Volume from self volumes(1): " << tot_vol << endl;
+      cout << "Volume energy from self volumes(1): " << vol_energy << endl;
+    }
+
+
+
+    
     // volume energy function 2 (small radii)
     RealOpenMM vol_energy2, volume2;
     for(int i = 0; i < numParticles; i++){
@@ -289,7 +311,7 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool i
 #endif
 
     //volume scaling factors from self volumes (with small radii)
-    double tot_vol = 0;
+    tot_vol = 0;
     for(int i = 0; i < numParticles; i++){
       RealOpenMM rad = radii_vdw[i];
       RealOpenMM vol = (4./3.)*M_PI*rad*rad*rad;
@@ -324,7 +346,7 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool i
       inverse_born_radius_fp[i] = fp;
     }
 
-    if(verbose_level > 4){
+    if(verbose_level > 3){
       cout << "Born radii:" << endl;
       RealOpenMM fp;
       for(int i = 0; i < numParticles; i++){
@@ -602,6 +624,35 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool i
       force[i] += vol_force[i] * w_egb;
     }
 
+
+    if(verbose_level > 3){
+      //creates input for test program
+      double nm2ang = 10.0;
+      double kjmol2kcalmol = 1/4.184;
+      double gf = kjmol2kcalmol/(nm2ang*nm2ang);
+      cout << "---- input for test program begins ----" << endl;
+      cout << numParticles << endl;
+      for(int i = 0; i < numParticles; i++){
+	cout << std::setprecision(6) << std::setw(5) << i << " " << std::setw(12) << nm2ang*pos[i][0] << " " << std::setw(12) << nm2ang*pos[i][1] << " " << std::setw(12) << nm2ang*pos[i][2] << " " << std::setw(12) << nm2ang*radii_vdw[i] << " " << std::setw(12) << charge[i] << " " << std::setw(12) << gf*gammas[i] << " " << std::setw(2) << ishydrogen[i] << endl;
+      }
+      cout << "--- input for test program ends ----" << endl;
+    }
+
+
+    if(verbose_level > 3){
+      //creates input for mkws program
+      double nm2ang = 10.0;
+      cout << "---- input for mkws program begins ----" << endl;
+      cout << numParticles << endl;
+      for(int i = 0; i < numParticles; i++){
+	string at_symbol = "A";
+	if(ishydrogen[i] > 0){
+	  at_symbol = "H";
+	}
+	cout << std::setprecision(6) << std::setw(5) << i << " " << at_symbol << "" << std::setw(12) << nm2ang*pos[i][0] << " " << std::setw(12) << nm2ang*pos[i][1] << " " << std::setw(12) << nm2ang*pos[i][2] << " " << std::setw(12) << nm2ang*radii_vdw[i] << endl;
+      }
+      cout << "--- input for mkws program ends ----" << endl;
+    }
     
     //returns energy
     return (double)energy;

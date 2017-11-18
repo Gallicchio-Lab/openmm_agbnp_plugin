@@ -176,9 +176,9 @@ static int add_children(GOverlap_Tree &tree, int parent_index, vector<GOverlap> 
   root->children_count = noverlaps;
 
   /* sort neighbors by overlap volume */
-  if(root->level == 1){
-    sort(children_overlaps.begin(), children_overlaps.end(), goverlap_compare);
-  }
+  //if(root->level == 1){
+  sort(children_overlaps.begin(), children_overlaps.end(), goverlap_compare);
+    //}
 
   int root_level = root->level;
 
