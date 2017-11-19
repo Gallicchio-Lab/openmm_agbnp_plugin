@@ -84,7 +84,7 @@ double AGBNPI4LookupTable::i4(double rij, double Ri, double Rj){
   return q;
 }
 
-double AGBNPI4LookupTable::i4ov(double rij, double Ri, double Rj){ 
+double AGBNPI4LookupTable::i4ov(double rij, double Ri, double Rj, double gvol12_factor){
   double ai = KFC/(Ri*Ri);
   double pii = PFC;
   double aj = KFC/(Rj*Rj); 
@@ -92,7 +92,7 @@ double AGBNPI4LookupTable::i4ov(double rij, double Ri, double Rj){
   double d2 = rij*rij;
   double gvol =  ogauss(d2, pii, pjj, ai, aj);
   double volj = 4.*M_PI*Rj*Rj*Rj/3.;
-  double newRj = pow((volj+2.*gvol)/volj,1./3.)*Rj;
+  double newRj = pow((volj+gvol12_factor*gvol)/volj,1./3.)*Rj;
   return i4(rij, Ri, newRj);
 }
 
@@ -101,7 +101,8 @@ double AGBNPI4LookupTable::i4ov(double rij, double Ri, double Rj){
 //to get the actual numerical value divide by Rj
 AGBNPI4LookupTable::AGBNPI4LookupTable(const unsigned int size, 
 				       const double rmin, const double rmax, 
-				       const double Ri, const double Rj){
+				       const double Ri, const double Rj,
+				       int version){
   //dimensionless parameters
   //  double dmin = rmin/Rj;
   //double dmax = rmax/Rj;
@@ -117,10 +118,12 @@ AGBNPI4LookupTable::AGBNPI4LookupTable(const unsigned int size,
 
   vector<double> x(size);
   vector<double> y(size);
+  double gvol12_factor = 0.0; //default for AGBNP1
+  if(version == 2) gvol12_factor = 2.0; //default for AGBNP2
   for(unsigned int i = 0; i < size ; i++){
     x[i] = i*dr + rmin;
     double s = switching_function(x[i], xa, xb);
-    y[i] = s*i4ov(x[i], Ri, Rj);
+    y[i] = s*i4ov(x[i], Ri, Rj, gvol12_factor);
   }
   table = new AGBNPLookupTable(x,y);
 }
@@ -162,7 +165,7 @@ AGBNPI42DLookupTable::AGBNPI42DLookupTable(const vector<double>& Radii, const ve
       double Rj = *jt;
       int typej = distance(unique_radii_j.begin(),jt);
       unsigned int index = typei * ntypes_screener + typej;
-      tables[index] = new AGBNPI4LookupTable(rnodes_count, rmin, rmax, Ri, Rj);
+      tables[index] = new AGBNPI4LookupTable(rnodes_count, rmin, rmax, Ri, Rj, version);
     }
   }
 

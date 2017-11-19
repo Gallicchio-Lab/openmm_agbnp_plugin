@@ -129,7 +129,8 @@ class AGBNPI4LookupTable {
  public:
   AGBNPI4LookupTable(const unsigned int size, 
 		     const double rmin, const double rmax, 
-		     const double Ri, const double Rj);
+		     const double Ri, const double Rj,
+		     int version);
   double eval(const double x){
     return table->eval(x);
   }
@@ -140,7 +141,7 @@ class AGBNPI4LookupTable {
   double switching_function(double x, double xa, double xb);
   double ogauss(double d2, double pi, double pj, double ai, double aj);
   double i4(double rij, double Ri, double Rj);
-  double i4ov(double rij, double Ri, double Rj);
+  double i4ov(double rij, double Ri, double Rj, double gvol12_factor);
 };
 
 
