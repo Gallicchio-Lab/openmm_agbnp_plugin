@@ -1371,7 +1371,7 @@ __kernel __attribute__((reqd_work_group_size(OV_WORK_GROUP_SIZE,1,1)))
   __local volatile uint niterations;
   const uint gsize = OV_WORK_GROUP_SIZE;
 
-
+  const uint max_level = MAX_ORDER;
 
   __local volatile uint n_buffer; //how many overlaps in buffer to process
   __local volatile uint buffer_pos[OV_WORK_GROUP_SIZE]; //where to store in temp. buffers
@@ -1410,7 +1410,8 @@ __kernel __attribute__((reqd_work_group_size(OV_WORK_GROUP_SIZE,1,1)))
 	int atom1 = ovLastAtom[slot];
 	int processed = ovProcessedFlag[slot];
 	int ok2process = ovOKtoProcessFlag[slot];
-	bool letsgo = (parent >= 0 && processed == 0 && ok2process > 0 && atom1 >= 0);
+	int level = ovLevel[slot];
+	bool letsgo = (parent >= 0 && processed == 0 && ok2process > 0 && atom1 >= 0 && level < max_level);
 	
 	
 	//
@@ -1418,7 +1419,7 @@ __kernel __attribute__((reqd_work_group_size(OV_WORK_GROUP_SIZE,1,1)))
 	//
 	
 	// step 1: load overlap "i" parameters in local buffers
-	level1_buffer[local_id] = ovLevel[slot];
+	level1_buffer[local_id] = level;
 	posq1_buffer[local_id] = (real4)(ovG[slot].xyz,0);
 	a1_buffer[local_id] = ovG[slot].w;
 	v1_buffer[local_id] = ovVolume[slot];

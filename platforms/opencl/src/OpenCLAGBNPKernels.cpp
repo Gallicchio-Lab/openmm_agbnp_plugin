@@ -37,7 +37,7 @@
 //#define KFC (2.2269859253)
 
 // minimum overlap volume to count
-#define MAX_ORDER (12)
+#define MAX_ORDER (8)
 
 using namespace AGBNPPlugin;
 using namespace OpenMM;
@@ -213,7 +213,7 @@ void OpenCLCalcAGBNPForceKernel::init_tree_size(int pad_modulo,
     offset += natoms_in_tree[section];
   }
   // double estimate
-  int size = max_size * 2;
+  int size = max_size * 6;// *2 and *4 are insufficient with atomic clashes, really need to make this dynamic
   // now pad
   int npadsize = pad_modulo*((size+pad_modulo-1)/pad_modulo);
   
@@ -738,6 +738,7 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       pairValueDefines["TILE_SIZE"] = cl.intToString(OpenCLContext::TileSize);
       pairValueDefines["OV_WORK_GROUP_SIZE"] = cl.intToString(ov_work_group_size);
       pairValueDefines["SMALL_VOLUME"] = "1.e-4";
+      pairValueDefines["MAX_ORDER"] = cl.intToString(MAX_ORDER);
 
       if (useCutoff)
 	pairValueDefines["USE_CUTOFF"] = "1";
