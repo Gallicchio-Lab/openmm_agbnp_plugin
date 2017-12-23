@@ -167,7 +167,8 @@ double ReferenceCalcAGBNPForceKernel::executeGVolSA(ContextImpl& context, bool i
     gvol->set_gammas(nu);
     gvol->compute_tree(pos);
     gvol->compute_volume(pos, volume1, vol_energy1, vol_force, free_volume, self_volume);
-    
+
+      
     //returns energy and gradients from volume energy function
     for(int i = 0; i < numParticles; i++){
       force[i] += vol_force[i] * w_evol;
@@ -234,6 +235,24 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool i
       gvol->print_tree();
     }
     gvol->compute_volume(pos, volume1, vol_energy1, vol_force, free_volume, self_volume);
+
+
+    if(verbose_level > 0){
+      vector<int> noverlaps(numParticles);
+      for(int i = 0; i<numParticles; i++) noverlaps[i] = 0;
+      gvol->getstat(noverlaps);
+      
+      //compute maximum number of overlaps
+      int nn = 0;
+      for(int i = 0; i < noverlaps.size(); i++){
+	nn += noverlaps[i];
+      }
+
+      cout << "Number of overlaps: " << nn << endl;
+    }
+
+
+
     
     //returns energy and gradients from volume energy function
     for(int i = 0; i < numParticles; i++){

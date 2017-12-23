@@ -2,6 +2,7 @@
 #include <cfloat>
 #include <vector>
 #include <iostream>
+#include <iomanip>
 #include <algorithm>
 #include "openmm/reference/SimTKOpenMMRealType.h"
 #include "openmm/reference/RealVec.h"
@@ -603,12 +604,12 @@ static void test_gaussian(GOverlap_Tree &tree){
 
 
 void GOverlap::print_overlap(void){
-  cout << level << " " << atom << " " << parent_index << " " <<  children_startindex << " " << children_count << " " << self_volume << " " << volume << " " << gamma1i << " " << g.a << " " << g.c[0] << " " <<  g.c[1] << " " <<  g.c[2] << " " <<  dv1[0] << " " << dv1[1] << " " << dv1[2] << " " << sfp << endl;
+  cout << std::setprecision(4) << std::setw(7) << level << " " << std::setw(7)  << atom << " " << std::setw(7)  << parent_index << " " <<  std::setw(7) << children_startindex << " " << std::setw(7) << children_count << " " << std::setw(10) << self_volume << " " << std::setw(10) << volume << " " << std::setw(10) << gamma1i << " " << std::setw(10) << g.a << " " << std::setw(10) << g.c[0] << " " <<  std::setw(10) << g.c[1] << " " <<  std::setw(10) << g.c[2] << " " <<  std::setw(10) << dv1[0] << " " << std::setw(10) << dv1[1] << " " << std::setw(10) << dv1[2] << " " << std::setw(10) << sfp << endl;
 }
 
 static void print_tree_r(vector<GOverlap> &overlaps, int slot){
   GOverlap &ov = overlaps[slot];
-  std::cout << "t: " << slot << " ";
+  std::cout << "tg: " << std::setw(6) << slot << " ";
   ov.print_overlap();
   for(int i=ov.children_startindex ; i < ov.children_startindex+ ov.children_count; i++){
     print_tree_r(overlaps, i);
@@ -704,21 +705,25 @@ void GaussVol::compute_surface(const int init,
    for(int i = 0; i < natoms; ++i) surface_areas[i] = (self_volume1[i] - self_volume2[i])/SA_DR; 
  }
 
+int nchildren_under_slot_r(GOverlap_Tree &tree, int slot){
+  int n = 0;
+  if(tree.overlaps[slot].children_count > 0){
+    n += tree.overlaps[slot].children_count;
+    //now calls itself on the children
+    for(int i = 0; i < tree.overlaps[slot].children_count; i++){
+      n += nchildren_under_slot_r(tree, tree.overlaps[slot].children_startindex + i);
+    }
+  }
+  return n;
+}
+
+
 // returns number of overlaps for each atom 
-void GaussVol::getstat(vector<int>& nov, vector<int>& nov_2body){
-   int natoms = tree.natoms;
-   nov.resize(natoms);
-   nov_2body.resize(natoms);
-   for(int i=0; i<natoms; i++) nov[i] = 0;
-   for(int i=0; i<natoms; i++) nov_2body[i] = 0;
-   int tree_size = tree.overlaps.size();
-   for(int slot = 0; slot < tree_size; slot++){
-     int atom = tree.overlaps[slot].atom;
-     if(atom >= 0 && atom < natoms){
-       nov[atom] += 1;
-       if(tree.overlaps[slot].level == 2){
-   	 nov_2body[atom] += 1;
-       }
-     }
+void GaussVol::getstat(vector<int>& nov){
+   nov.resize(tree.natoms);
+   for(int i=0; i<tree.natoms; i++) nov[i] = 0;
+   for(int atom = 0; atom < tree.natoms; atom++){
+     int slot = atom + 1;
+     nov[atom] = nchildren_under_slot_r(tree, slot);
    }
 }

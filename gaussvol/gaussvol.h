@@ -52,7 +52,7 @@ using namespace OpenMM;
 #define MIN_GVOL (FLT_MIN)
 
 // maximum overlap level
-#define MAX_ORDER (12)
+#define MAX_ORDER (8)
 
 //use nm and kj
 #define ANG (0.1f)
@@ -150,7 +150,7 @@ class GaussVol {
 		       vector<RealOpenMM> &surface_areas);
 
   // returns number of overlaps for each atom 
-  void getstat(vector<int>& nov, vector<int>& nov_2body);
+  void getstat(vector<int>& nov);
 
   void print_tree(void){
     tree.print_tree();

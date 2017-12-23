@@ -78,8 +78,7 @@ public:
     int copy_tree_to_device(void);
 
     /* init tree */
-    void init_tree_size(int pad_modulo, 
-			vector<int>& noverlaps, vector<int>& noverlaps_2body);
+    void init_tree_size(int pad_modulo, vector<int>& noverlaps);
 
 private:
     const AGBNPForce *gvol_force;

@@ -36,9 +36,6 @@
 // conversion factors from spheres to Gaussians
 //#define KFC (2.2269859253)
 
-// minimum overlap volume to count
-#define MAX_ORDER (8)
-
 using namespace AGBNPPlugin;
 using namespace OpenMM;
 using namespace std;
@@ -70,8 +67,7 @@ OpenCLCalcAGBNPForceKernel::~OpenCLCalcAGBNPForceKernel() {
 static int _nov_ = 0;
 
 void OpenCLCalcAGBNPForceKernel::init_tree_size(int pad_modulo,
-					       vector<int>& noverlaps, vector<int>& noverlaps_2body)  {
-  OpenCLNonbondedUtilities& nb = cl.getNonbondedUtilities();
+					       vector<int>& noverlaps)  {
   total_tree_size = 0;
   tree_size.clear();
   tree_pointer.clear();
@@ -80,143 +76,69 @@ void OpenCLCalcAGBNPForceKernel::init_tree_size(int pad_modulo,
   natoms_in_tree.clear();
   first_atom.clear();
 
-  // compute number of heavy atoms
-  int num_heavy = 0;
-  for(int i = 0; i < cl.getNumAtoms(); i++){
-    if(!atom_ishydrogen[i]) num_heavy += 1;
-  }
-
-  if(verbose_level > 0) std::cout << "Number of heavy atoms: " << num_heavy << std::endl; 
-
-  //#define SMALL_SECTIONS
-#ifdef SMALL_SECTIONS
-  // this constructs many tree sections with 16 to 32 atoms per section
-  int heavyatoms_per_section = num_heavy/num_compute_units;
-  int nmin = OpenCLContext::TileSize/2;
-  int nmax = OpenCLContext::TileSize;
-  if(heavyatoms_per_section < nmin){
-    // not enough atoms to feed the available compute units 
-    // use fewer tree sections
-    // place nmin heavy atoms in each section, and the remainder in the last.
-    num_sections = num_heavy/nmin;
-  }else if(heavyatoms_per_section > nmax){
-    // more than minimum number of atoms per section
-    // use a multiple of the number of compute devices to have at least
-    // nmax atoms per section
-    num_sections = num_compute_units;
-    while(num_heavy/num_sections >= nmax){
-      num_sections += num_compute_units;
-    }
-  }else{
-    // within limits, use as many sections as compute units
-    // distribute atoms equally among them
-    num_sections = num_compute_units;
-  }
-  heavyatoms_per_section = num_heavy/num_sections;
-  int extra_heavy_atoms = num_heavy % num_sections;
-  natoms_in_tree.resize(num_sections);
-  int iatom = 0;
-  for(int section = 0 ; section < num_sections ; section++){
-    natoms_in_tree[section] = 0;
-    int nheavy_in_section = 0;
-    int target_nheavy = heavyatoms_per_section;
-    if(section < extra_heavy_atoms) target_nheavy += 1;
-    while(nheavy_in_section < target_nheavy && iatom < cl.getNumAtoms()){
-      if(!atom_ishydrogen[iatom]) nheavy_in_section += 1;
-      iatom += 1;
-      natoms_in_tree[section] += 1;
-    }
-  }
-  //at this point all heavy atoms have been placed
-  //trailing hydrogen atoms do not need to be inserted in tree
-
-#else
-
-  // this constructs as many tree sections as compute units
-  // sections may contain many atoms
-
+  //assigns atoms to compute units (tree sections) in such a way that each compute unit gets
+  //approximately equal number of overlaps
   num_sections = num_compute_units;
-  int heavyatoms_per_section = num_heavy/num_sections;
-  int extra_heavy_atoms = num_heavy % num_sections;
-  int nmin = OpenCLContext::TileSize/2;
-  if(heavyatoms_per_section >= nmin){
-    // more than minimum number of atoms per section
-    // standard behavior: heavy atoms are distributed among the available compute units
-    // distribute extra heavy atoms to the top sections
-    natoms_in_tree.resize(num_sections);
-    int iatom = 0;
-    for(int section = 0 ; section < num_sections ; section++){
-      natoms_in_tree[section] = 0;
-      int nheavy_in_section = 0;
-      int target_nheavy = heavyatoms_per_section;
-      if(section < extra_heavy_atoms) target_nheavy += 1;
-      while(nheavy_in_section < target_nheavy && iatom < cl.getNumAtoms()){
-	if(!atom_ishydrogen[iatom]) nheavy_in_section += 1;
-	iatom += 1;
-	natoms_in_tree[section] += 1;
-      }
-    }
-    //at this point all heavy atoms have been placed
-    //trailing hydrogen atoms do not need to be inserted in tree
-  }else{
-    // not enough atoms to feed the available compute units 
-    // use fewer tree sections
-    // place nmin heavy atoms in each section, and the remainder in the last.
-    num_sections = num_heavy/nmin;
-    natoms_in_tree.resize(num_sections);
-    int iatom = 0;
-    for(int section = 0 ; section < num_sections ; section++){
-      natoms_in_tree[section] = 0;
-      int nheavy_in_section = 0;
-      int target_nheavy = nmin;
-      while(nheavy_in_section < target_nheavy && iatom < cl.getNumAtoms()){
-        if(!atom_ishydrogen[iatom]) nheavy_in_section += 1;
-        iatom += 1;
-        natoms_in_tree[section] += 1;
-      }
-    }
-    //add last section if needed
-    if(num_heavy % nmin != 0){
-      num_sections += 1;
-      natoms_in_tree.push_back(0);
-      int section = num_sections - 1;
-      int nheavy_in_section = 0;
-      int target_nheavy = num_heavy % nmin;
-      while(nheavy_in_section < target_nheavy &&  iatom < cl.getNumAtoms()){
-	if(!atom_ishydrogen[iatom]) nheavy_in_section += 1;
-        iatom += 1;
-        natoms_in_tree[section] += 1;
-      }
-    }
+  vector<int> noverlaps_sum(cl.getNumAtoms()+1);//prefix sum of number of overlaps per atom
+  noverlaps_sum[0] = 0;
+  for(int i=1;i <= cl.getNumAtoms();i++){
+    noverlaps_sum[i] = noverlaps[i-1] +  noverlaps_sum[i-1];
   }
+  int n_overlaps_total = noverlaps_sum[cl.getNumAtoms()];
+
+  //  for(int i=0;i < cl.getNumAtoms();i++){
+  //  cout << "nov " << i << " noverlaps " << noverlaps[i] << " " <<  noverlaps_sum[i] << endl;
+  //}
   
-#endif
 
-
-  total_atoms_in_tree = 0;
-  for(int section = 0 ; section < num_sections; section++){
-    total_atoms_in_tree += natoms_in_tree[section];
+  //average number of overlaps per section
+  int n_overlaps_per_section;
+  if(num_sections > 1){
+    n_overlaps_per_section = n_overlaps_total/(num_sections - 1);
+  }else{
+    n_overlaps_per_section = n_overlaps_total;
   }
 
-  // computes size of each tree section
-  int max_size = 0;
-  int offset = 0;
+  //cout << "n_overlaps_per_section : " << n_overlaps_per_section << endl;
+
+  
+  //assigns atoms to compute units
+  vector<int> compute_unit_of_atom(cl.getNumAtoms());
+  total_atoms_in_tree = 0;
+  natoms_in_tree.resize(num_sections);
   for(int section = 0; section < num_sections; section++){
-    int nn = 0;
-    for(int i = 0; i < natoms_in_tree[section] ; i++){
-      int iat = offset + i;
-      if(iat < cl.getNumAtoms()){
-	nn += noverlaps[iat];
-      }
+    natoms_in_tree[section] = 0;
+  }
+  for(int i=1;i < cl.getNumAtoms();i++){
+    int section = noverlaps_sum[i]/n_overlaps_per_section;
+    compute_unit_of_atom[i] = section;
+    natoms_in_tree[section] += 1;
+    total_atoms_in_tree += 1;
+  }
+
+  
+  // computes size of tree sections
+  int offset = 0;
+  vector<int> section_size(num_sections);
+  for(int section = 0; section < num_sections; section++){
+    section_size[section] = 0;
+  }
+  for(int i=0;i < cl.getNumAtoms();i++){
+    int section = compute_unit_of_atom[i];
+    section_size[section] += noverlaps[i];
+  }
+  int max_size = 0;
+  for(int section = 0; section < num_sections; section++){
+    //cout << "Sn: section: " << section << " natoms " << natoms_in_tree[section] << " size " << section_size[section] << endl; 
+    if(section_size[section] > max_size){
+      max_size = section_size[section];
     }
-    if(nn>max_size) max_size = nn;
-    offset += natoms_in_tree[section];
   }
   // double estimate
-  int size = max_size * 6;// *2 and *4 are insufficient with atomic clashes, really need to make this dynamic
+  int size = max_size * 6;//*2 and *4 are insufficient with atomic clashes, really need to make this dynamic
   // now pad
   int npadsize = pad_modulo*((size+pad_modulo-1)/pad_modulo);
-  
+
   // set tree pointers
   tree_pointer.resize(num_sections);
   offset = 0;
@@ -245,6 +167,7 @@ void OpenCLCalcAGBNPForceKernel::init_tree_size(int pad_modulo,
     total_tree_size += npadsize;
     offset += natoms_in_tree[section];
   }
+
 }
 
 
@@ -481,20 +404,17 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       gvol->compute_tree(positions);
       gvol->compute_volume(positions, volume, vol_energy, vol_force, free_volume, self_volume);
       vector<int> noverlaps(cl.getPaddedNumAtoms());
-      vector<int> noverlaps_2body(cl.getPaddedNumAtoms());
       for(int i = 0; i<cl.getPaddedNumAtoms(); i++) noverlaps[i] = 0;
-      for(int i = 0; i<cl.getPaddedNumAtoms(); i++) noverlaps_2body[i] = 0;
-      gvol->getstat(noverlaps, noverlaps_2body);
-
+      gvol->getstat(noverlaps);
+      //gvol->print_tree();
+      
       //compute maximum number of 2-body overlaps
-      int nn = 0, nn2 = 0;
-      for(int i = 0; i < noverlaps_2body.size(); i++){
+      int nn = 0;
+      for(int i = 0; i < noverlaps.size(); i++){
 	nn += noverlaps[i];
-	nn2 += noverlaps_2body[i];
       }
 
       if(verbose_level > 0) cout << "Number of overlaps: " << nn << endl;
-      if(verbose_level > 0) cout << "Number of 2-body overlaps: " << nn2 << endl;
       
       if(verbose_level > 0){
 	cout << "Device: " << cl.getDevice().getInfo<CL_DEVICE_NAME>()  << endl;
@@ -517,7 +437,7 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
 
       //figures out tree sizes, etc.
       int pad_modulo = ov_work_group_size;
-      init_tree_size(pad_modulo, noverlaps, noverlaps_2body);
+      init_tree_size(pad_modulo, noverlaps);
 
       if(verbose_level > 0) std::cout << "Tree size: " << total_tree_size << std::endl;
 
