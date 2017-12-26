@@ -43,8 +43,86 @@ class GOverlap_Tree {
 class OpenCLCalcAGBNPForceKernel : public CalcAGBNPForceKernel {
 public:
     OpenCLCalcAGBNPForceKernel(std::string name, const OpenMM::Platform& platform, OpenMM::OpenCLContext& cl, const OpenMM::System& system) :
-  CalcAGBNPForceKernel(name, platform), hasInitializedKernel(false), hasCreatedKernels(false), cl(cl), system(system) {
-    }
+  CalcAGBNPForceKernel(name, platform), cl(cl), system(system) {
+
+    hasCreatedKernels = false;
+    hasInitializedKernels = false;
+    
+    radtypeScreened = NULL;
+    radtypeScreener = NULL;
+    
+    selfVolume = NULL;
+    volScalingFactor = NULL;
+    BornRadius = NULL;
+    invBornRadius = NULL;
+    invBornRadius_fp = NULL;
+    GBDerY = NULL;
+    GBDerBrU = NULL;
+    GBDerU = NULL;
+    VdWDerBrW = NULL;
+    VdWDerW = NULL;
+    
+    selfVolumeBuffer_long = NULL;
+    selfVolumeBuffer = NULL;
+    AccumulationBuffer1_long = NULL;
+    AccumulationBuffer1_real = NULL;
+    AccumulationBuffer2_long = NULL;
+    AccumulationBuffer2_real = NULL;
+
+    ovAtomTreePointer = NULL;
+    ovAtomTreeSize = NULL;
+    ovTreePointer = NULL;
+    ovNumAtomsInTree = NULL;
+    ovFirstAtom = NULL;
+    NIterations = NULL;
+    ovAtomTreePaddedSize = NULL;
+    ovAtomTreeLock = NULL;
+    ovLevel = NULL;
+    ovG = NULL;
+    ovVolume = NULL;
+    ovVSfp = NULL;
+    ovSelfVolume = NULL;
+    ovVolEnergy = NULL;
+    ovGamma1i = NULL;
+
+    ovDV1 = NULL;
+    ovDV2 = NULL;
+    ovPF = NULL;
+    
+    ovLastAtom = NULL;
+    ovRootIndex = NULL;
+    ovChildrenStartIndex = NULL;
+    ovChildrenCount = NULL;
+    ovChildrenCountTop = NULL;
+    ovChildrenCountBottom = NULL;
+    ovProcessedFlag = NULL;
+    ovOKtoProcessFlag = NULL;
+    ovAtomBuffer = NULL;
+    ovChildrenReported = NULL;
+
+    GaussianExponent = NULL;
+    GaussianVolume = NULL;
+
+    AtomicGamma = NULL;
+
+    temp_buffer_size = -1;
+    gvol_buffer_temp = NULL;
+    tree_pos_buffer_temp = NULL;
+    i_buffer_temp = NULL;
+    atomj_buffer_temp = NULL;
+
+    i4_lut = NULL;    
+    i4YValues = NULL;
+    i4Y2Values = NULL;
+    testF = NULL;
+    testDerF = NULL;
+    
+    PanicButton = NULL;
+    pinnedPanicButtonBuffer = NULL;
+    pinnedPanicButtonMemory = NULL;
+    
+    tree_size_boost = 2;
+  }
 
     ~OpenCLCalcAGBNPForceKernel();
     /**
@@ -90,7 +168,7 @@ private:
     bool useExclusions;
     double cutoffDistance;
     int maxTiles;
-    bool hasInitializedKernel;
+    bool hasInitializedKernels;
     bool hasCreatedKernels;
     OpenMM::OpenCLContext& cl;
     const OpenMM::System& system;
@@ -277,6 +355,13 @@ private:
     double executeAGBNP1(ContextImpl& context, bool includeForces, bool includeEnergy);
     double executeAGBNP2(ContextImpl& context, bool includeForces, bool includeEnergy); 
 
+    //flag to give up
+    OpenMM::OpenCLArray* PanicButton;
+    cl::Buffer* pinnedPanicButtonBuffer;
+    int* pinnedPanicButtonMemory;
+    cl::Event downloadPanicButtonEvent;
+    int tree_size_boost;
+    
 };
 
 } // namespace AGBNPPlugin

@@ -7,6 +7,7 @@
 #include "OpenCLAGBNPKernelSources.h"
 #include "openmm/internal/ContextImpl.h"
 #include "openmm/opencl/OpenCLNonbondedUtilities.h"
+#include "openmm/opencl/OpenCLArray.h"
 #include "openmm/opencl/OpenCLForceInfo.h"
 #include <cmath>
 #include <cfloat>
@@ -135,7 +136,12 @@ void OpenCLCalcAGBNPForceKernel::init_tree_size(int pad_modulo,
     }
   }
   // double estimate
-  int size = max_size * 6;//*2 and *4 are insufficient with atomic clashes, really need to make this dynamic
+  int size;
+  if(hasCreatedKernels){//done this before
+    tree_size_boost *= 2;
+  }
+  size = max_size * tree_size_boost; 
+
   // now pad
   int npadsize = pad_modulo*((size+pad_modulo-1)/pad_modulo);
 
@@ -335,15 +341,17 @@ void OpenCLCalcAGBNPForceKernel::initialize(const System& system, const AGBNPFor
 
     gvol_force = &force;
     niterations = 0;
+    hasInitializedKernels = false;
     hasCreatedKernels = false;
 }
 
 
 double OpenCLCalcAGBNPForceKernel::execute(ContextImpl& context, bool includeForces, bool includeEnergy) {
   double energy = 0.0;
-  if (!hasCreatedKernels) {
-    hasCreatedKernels = true;
+  if (!hasCreatedKernels || !hasInitializedKernels) {
     executeInitKernels(context, includeForces, includeEnergy);
+    hasInitializedKernels = true;
+    hasCreatedKernels = true;
   }
   if(version == 0){
     energy = executeGVolSA(context, includeForces, includeEnergy);
@@ -482,77 +490,148 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       //Sets up buffers
 
       //atomic buffers
+      if(ovAtomTreePointer) delete ovAtomTreePointer;
       ovAtomTreePointer = OpenCLArray::create<cl_int>(cl, cl.getPaddedNumAtoms(), "ovAtomTreePointer");
 
       //tree section buffers
+      if(ovAtomTreeSize) delete ovAtomTreeSize;
       ovAtomTreeSize = OpenCLArray::create<cl_int>(cl, num_sections, "ovAtomTreeSize");
+      if(NIterations) delete NIterations;
       NIterations = OpenCLArray::create<cl_int>(cl, num_sections, "NIterations");
+      if(ovAtomTreePaddedSize) delete ovAtomTreePaddedSize;
       ovAtomTreePaddedSize = OpenCLArray::create<cl_int>(cl, num_sections, "ovAtomTreePaddedSize");
+      if(ovNumAtomsInTree) delete ovNumAtomsInTree;
       ovNumAtomsInTree = OpenCLArray::create<cl_int>(cl, num_sections, "ovNumAtomsInTree");
+      if(ovTreePointer) delete ovTreePointer;
       ovTreePointer = OpenCLArray::create<cl_int>(cl, num_sections, "ovTreePointer");
+      if(ovAtomTreeLock) delete ovAtomTreeLock;
       ovAtomTreeLock = OpenCLArray::create<cl_int>(cl, num_sections, "ovAtomTreeLock");
+      if(ovFirstAtom) delete ovFirstAtom;
       ovFirstAtom = OpenCLArray::create<cl_int>(cl, num_sections, "ovFirstAtom");
 
       //tree buffers
+      if(ovLevel) delete ovLevel;
       ovLevel = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovLevel");
+      if(ovG) delete ovG;
       ovG = OpenCLArray::create<mm_float4>(cl, total_tree_size, "ovG"); //gaussian position + exponent
+      if(ovVolume) delete ovVolume;
       ovVolume = OpenCLArray::create<cl_float>(cl, total_tree_size, "ovVolume");
+      if(ovVSfp) delete ovVSfp;
       ovVSfp = OpenCLArray::create<cl_float>(cl, total_tree_size, "ovVSfp");
+      if(ovSelfVolume) delete ovSelfVolume;
       ovSelfVolume = OpenCLArray::create<cl_float>(cl, total_tree_size, "ovSelfVolume");
+      if(ovVolEnergy) delete ovVolEnergy;
       ovVolEnergy = OpenCLArray::create<cl_double>(cl, total_tree_size, "ovVolEnergy");
+      if(ovGamma1i) delete ovGamma1i;
       ovGamma1i = OpenCLArray::create<cl_float>(cl, total_tree_size, "ovGamma1i");
+      if(ovDV1) delete ovDV1;
       ovDV1 = OpenCLArray::create<mm_float4>(cl, total_tree_size, "ovDV1"); //dV12/dr1 + dV12/dV1 for each overlap
+      if(ovDV2) delete ovDV2;
       ovDV2 = OpenCLArray::create<mm_float4>(cl, total_tree_size, "ovDV2"); //volume gradient accumulator
+      if(ovPF) delete ovPF;
       ovPF = OpenCLArray::create<mm_float4>(cl, total_tree_size, "ovPF"); //(P) and (F) auxiliary variables
+      if(ovLastAtom) delete ovLastAtom;
       ovLastAtom = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovLastAtom");
+      if(ovRootIndex) delete ovRootIndex;
       ovRootIndex = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovRootIndex");
+      if(ovChildrenStartIndex) delete ovChildrenStartIndex;
       ovChildrenStartIndex = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovChildrenStartIndex");
+      if(ovChildrenCount) delete ovChildrenCount;
       ovChildrenCount = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovChildrenCount");
+      if(ovChildrenCountTop) delete ovChildrenCountTop;
       ovChildrenCountTop = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovChildrenCountTop");
+      if(ovChildrenCountBottom) delete ovChildrenCountBottom;
       ovChildrenCountBottom = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovChildrenCountBottom");
+      if(ovProcessedFlag) delete ovProcessedFlag;
       ovProcessedFlag = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovProcessedFlag");
+      if(ovOKtoProcessFlag) delete ovOKtoProcessFlag;
       ovOKtoProcessFlag = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovOKtoProcessFlag");
+      if(ovChildrenReported) delete ovChildrenReported;
       ovChildrenReported = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovChildrenReported");
 
+      //sets up flag to detect when tree size is exceeded
+      if(PanicButton) delete PanicButton;
+      PanicButton = OpenCLArray::create<cl_int>(cl, 1, "PanicButton");
+      vector<cl_int> panic_button(1);
+      panic_button[0] = 0; //init with zero
+      PanicButton->upload(panic_button);
+      
+#ifdef NOTNOW
+      //not sure how to use pinned memory for I/O of PanicButton flag
+      if(pinnedPanicButtonBuffer) delete pinnedPanicButtonBuffer;
+      pinnedPanicButtonBuffer = new cl::Buffer(cl.getContext(), CL_MEM_ALLOC_HOST_PTR, sizeof(int));
+      if(pinnedPanicButtonMemory) delete pinnedPanicButtonMemory;
+      pinnedPanicButtonMemory = (int*) cl.getQueue().enqueueMapBuffer(*pinnedPanicButtonBuffer, CL_TRUE, CL_MAP_READ, 0, sizeof(int));
+#endif
+      
       // atomic reduction buffers, one for each tree section
       // used only if long int atomics are not available
       //   ovAtomBuffer holds volume energy derivatives (in xyz)
+      if(ovAtomBuffer) delete ovAtomBuffer;
       ovAtomBuffer = OpenCLArray::create<mm_float4>(cl, cl.getPaddedNumAtoms()*num_sections, "ovAtomBuffer");
+      if(selfVolumeBuffer) delete selfVolumeBuffer;
       selfVolumeBuffer = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms()*num_sections, "selfVolumeBuffer");
 
       // "long" version of  selfVolume accumulation buffer updated using atomics
+      if(selfVolumeBuffer_long) delete selfVolumeBuffer_long;
       selfVolumeBuffer_long = OpenCLArray::create<cl_long>(cl, cl.getPaddedNumAtoms(), "selfVolumeBuffer_long");
 
       //traditional and "long" versions of general accumulation buffers
+      if(!AccumulationBuffer1_real) delete AccumulationBuffer1_real;
       AccumulationBuffer1_real = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms()*num_compute_units, "AccumulationBuffer1_real");
+      if(!AccumulationBuffer1_long) delete AccumulationBuffer1_long;
       AccumulationBuffer1_long = OpenCLArray::create<cl_long>(cl, cl.getPaddedNumAtoms(), "AccumulationBuffer1_long");
+      if(!AccumulationBuffer2_real) delete AccumulationBuffer2_real;
       AccumulationBuffer2_real = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms()*num_compute_units, "AccumulationBuffer2_real");
+      if(!AccumulationBuffer2_long) delete AccumulationBuffer2_long;
       AccumulationBuffer2_long = OpenCLArray::create<cl_long>(cl, cl.getPaddedNumAtoms(), "AccumulationBuffer2_long");
 
 
       // atom-level properties
+      if(selfVolume) delete selfVolume;
       selfVolume = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms(), "selfVolume");
+      if(volScalingFactor) delete volScalingFactor;
       volScalingFactor = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms(), "volScalingFactor");
+      if(BornRadius) delete BornRadius;
       BornRadius = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms(), "BornRadius");
+      if(invBornRadius) delete invBornRadius;
       invBornRadius = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms(), "invBornRadius");
+      if(invBornRadius_fp) delete invBornRadius_fp;
       invBornRadius_fp = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms(), "invBornRadius_fp");
+      if(GBDerY) delete GBDerY;
       GBDerY = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms(), "GBDerY"); //Y intermediate variable for Born radius-dependent GB derivative
+      if(GBDerBrU) delete GBDerBrU;
       GBDerBrU = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms(), "GBDerBrU"); //bru variable for Born radius-dependent GB derivative
+      if(GBDerU) delete GBDerU;
       GBDerU = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms(), "GBDerU"); //W variable for self-volume-dependent GB derivative
+      if(VdWDerBrW) delete VdWDerBrW;
       VdWDerBrW = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms(), "VdWDerBrW"); //brw variable for Born radius-dependent Van der Waals derivative
+      if(VdWDerW) delete VdWDerW;
       VdWDerW = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms(), "VdWDerW"); //W variable for self-volume-dependent vdW derivative
 
       //atomic parameters
+      if(GaussianExponent) delete GaussianExponent;
       GaussianExponent = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms(), "GaussianExponent");
+      if(GaussianVolume) delete GaussianVolume;
       GaussianVolume = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms(), "GaussianVolume");
+      if(AtomicGamma) delete AtomicGamma;
       AtomicGamma = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms(), "AtomicGamma");
 
       //temp buffers to cache intermediate data in overlap tree construction (3-body and up)
-      int smax = 64; // this is n*(n-1)/2 where n is the max number of neighbors per overlap
+      //int smax = 64; // this is n*(n-1)/2 where n is the max number of neighbors per overlap
+      int smax = 256;//debug
+      //if(temp_buffer_size < 0) {
       temp_buffer_size = ov_work_group_size*num_sections*smax;
+      //}else{
+      //	temp_buffer_size = 2*temp_buffer_size;
+      //}
+      if(gvol_buffer_temp) delete gvol_buffer_temp;
       gvol_buffer_temp = OpenCLArray::create<cl_float>(cl, temp_buffer_size, "gvol_buffer_temp");
+      if(tree_pos_buffer_temp) delete tree_pos_buffer_temp;
       tree_pos_buffer_temp = OpenCLArray::create<cl_uint>(cl, temp_buffer_size, "tree_pos_buffer_temp");
+      if(i_buffer_temp) delete i_buffer_temp;
       i_buffer_temp = OpenCLArray::create<cl_int>(cl, temp_buffer_size, "i_buffer_temp");
+      if(atomj_buffer_temp) delete atomj_buffer_temp;
       atomj_buffer_temp = OpenCLArray::create<cl_int>(cl, temp_buffer_size, "atomj_buffer_temp");
 
       //now copy overlap tree arrays to device
@@ -576,14 +655,16 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       cl::Kernel kernel;
 
       kernel_name = "resetTree";
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      file = cl.replaceStrings(OpenCLAGBNPKernelSources::GVolResetTree, replacements);
-      program = cl.createProgram(file, defines);
-      //reset tree kernel
-      resetTreeKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
-      index = 0;
+      if(!hasCreatedKernels){
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	file = cl.replaceStrings(OpenCLAGBNPKernelSources::GVolResetTree, replacements);
+	program = cl.createProgram(file, defines);
+	//reset tree kernel
+	resetTreeKernel = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
       kernel = resetTreeKernel;
+      index = 0;
       kernel.setArg<cl_int>(index++, num_sections);
       kernel.setArg<cl::Buffer>(index++, ovTreePointer->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
@@ -609,10 +690,13 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
 
       //reset buffer kernel
       kernel_name = "resetBuffer";
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      resetBufferKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
+      if(!hasCreatedKernels){
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	resetBufferKernel = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
       index = 0;
+      if(verbose) cout << "setting arguments for kernel " << kernel_name << " ... " << endl;
       kernel = resetBufferKernel;
       kernel.setArg<cl_int>(index++, cl.getPaddedNumAtoms());
       kernel.setArg<cl_int>(index++, num_sections);
@@ -623,11 +707,14 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       
       //reset tree counters kernel
       kernel_name = "resetSelfVolumes";
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      resetSelfVolumesKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
-      kernel = resetSelfVolumesKernel;
+      if(!hasCreatedKernels){
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	resetSelfVolumesKernel = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
       index = 0;
+      kernel = resetSelfVolumesKernel;
+      if(verbose) cout << "setting arguments for kernel " << kernel_name << " ... " << endl;
       kernel.setArg<cl_int>(index++, num_sections);
       kernel.setArg<cl::Buffer>(index++, ovTreePointer->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
@@ -928,23 +1015,27 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
 	        "       ovDV1[slot] = (real4)(-delta.xyz*dgvol,dgvolv);\n";
 
 
+      int reset_tree_size;
 
-      string InitOverlapTreeSrc = cl.replaceStrings(OpenCLAGBNPKernelSources::GVolOverlapTree, replacements);
-
+      string InitOverlapTreeSrc;
       kernel_name = "InitOverlapTree_1body";
-      replacements["KERNEL_NAME"] = kernel_name;
+      if(!hasCreatedKernels){
+	InitOverlapTreeSrc = cl.replaceStrings(OpenCLAGBNPKernelSources::GVolOverlapTree, replacements);
 
+	replacements["KERNEL_NAME"] = kernel_name;
 
-      if(verbose) cout << "compiling GVolOverlapTree ..." ;
-      program = cl.createProgram(InitOverlapTreeSrc, pairValueDefines);
-      if(verbose) cout << " done. " << endl;
-
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      InitOverlapTreeKernel_1body_1 = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
-      int reset_tree_size = 1;
+	if(verbose) cout << "compiling GVolOverlapTree ..." ;
+	program = cl.createProgram(InitOverlapTreeSrc, pairValueDefines);
+	if(verbose) cout << " done. " << endl;
+	
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	InitOverlapTreeKernel_1body_1 = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
+      reset_tree_size = 1;
       index = 0;
       kernel = InitOverlapTreeKernel_1body_1;
+      if(verbose) cout << "setting arugments for kernel" << kernel_name << " ... " << endl;
       kernel.setArg<cl_int>(index++, cl.getPaddedNumAtoms());
       kernel.setArg<cl_int>(index++, num_sections);
       kernel.setArg<cl_int>(index++, reset_tree_size);
@@ -973,10 +1064,12 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++, ovChildrenStartIndex->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
 
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      program = cl.createProgram(InitOverlapTreeSrc, pairValueDefines);
-      if(verbose) cout << " done. " << endl;
-      InitOverlapTreeKernel_1body_2 = cl::Kernel(program, kernel_name.c_str());
+      if(!hasCreatedKernels){
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	program = cl.createProgram(InitOverlapTreeSrc, pairValueDefines);
+	if(verbose) cout << " done. " << endl;
+	InitOverlapTreeKernel_1body_2 = cl::Kernel(program, kernel_name.c_str());
+      }
       reset_tree_size = 0;
       index = 0;
       kernel = InitOverlapTreeKernel_1body_2;
@@ -1015,10 +1108,12 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
 	kernel_name = "InitOverlapTreeCount";
       }
       replacements["KERNEL_NAME"] = kernel_name;
-
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      InitOverlapTreeCountKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
+      
+      if(!hasCreatedKernels){
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	InitOverlapTreeCountKernel = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
       index = 0;
       kernel = InitOverlapTreeCountKernel;
       kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
@@ -1038,11 +1133,13 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       }
       kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
 
-      kernel_name = "reduceovCountBuffer";
-      replacements["KERNEL_NAME"] = kernel_name;
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      reduceovCountBufferKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
+      if(!hasCreatedKernels){
+	kernel_name = "reduceovCountBuffer";
+	replacements["KERNEL_NAME"] = kernel_name;
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	reduceovCountBufferKernel = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
       index = 0;
       kernel = reduceovCountBufferKernel;
       kernel.setArg<cl_int>(index++, num_sections);
@@ -1054,16 +1151,19 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ovChildrenCountTop->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ovChildrenCountBottom->getDeviceBuffer());
-
-      if(deviceIsCpu){
-	kernel_name = "InitOverlapTree_cpu";
-      }else{
-	kernel_name = "InitOverlapTree";
+      kernel.setArg<cl::Buffer>(index++, PanicButton->getDeviceBuffer());
+      
+      if(!hasCreatedKernels){
+	if(deviceIsCpu){
+	  kernel_name = "InitOverlapTree_cpu";
+	}else{
+	  kernel_name = "InitOverlapTree";
+	}
+	replacements["KERNEL_NAME"] = kernel_name;
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	InitOverlapTreeKernel = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
       }
-      replacements["KERNEL_NAME"] = kernel_name;
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      InitOverlapTreeKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
       index = 0;
       kernel = InitOverlapTreeKernel;
       kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
@@ -1095,63 +1195,15 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ovChildrenCountTop->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ovChildrenCountBottom->getDeviceBuffer());
-
-
-
-#ifdef NOTNOW
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePaddedSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeLock->getDeviceBuffer());
-
-      kernel.setArg<cl::Buffer>(index++, cl.getPosq().getDeviceBuffer() );
-      kernel.setArg<cl::Buffer>(index++, GaussianExponent->getDeviceBuffer() );
-      kernel.setArg<cl::Buffer>(index++, GaussianVolume->getDeviceBuffer() );
-      kernel.setArg<cl::Buffer>(index++, AtomicGamma->getDeviceBuffer() );
-
-      kernel.setArg<cl::Buffer>(index++, nb.getExclusions().getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, nb.getExclusionTiles().getDeviceBuffer());
-      if (useCutoff) {
-        kernel.setArg<cl::Buffer>(index++, nb.getInteractingTiles().getDeviceBuffer());
-        kernel.setArg<cl::Buffer>(index++, nb.getInteractionCount().getDeviceBuffer());
-
-	//TO BE FIXED
-	cl_float zero(0);
-	mm_float4 zero4(zero,zero,zero,zero);
-	kernel.setArg<mm_float4>(index++, zero4);
-	kernel.setArg<mm_float4>(index++, zero4);
-	kernel.setArg<mm_float4>(index++, zero4);
-	kernel.setArg<mm_float4>(index++, zero4);
-	kernel.setArg<mm_float4>(index++, zero4);
-
-
-        //index += 5; // The periodic box size arguments are set when the kernel is executed.
-        kernel.setArg<cl_uint>(index++, nb.getInteractingTiles().getSize());
-        kernel.setArg<cl::Buffer>(index++, nb.getBlockCenters().getDeviceBuffer());
-        kernel.setArg<cl::Buffer>(index++, nb.getBlockBoundingBoxes().getDeviceBuffer());
-        kernel.setArg<cl::Buffer>(index++, nb.getInteractingAtoms().getDeviceBuffer());
-      }else{
-	kernel.setArg<cl_uint>(index++, cl.getNumAtomBlocks()*(cl.getNumAtomBlocks()+1)/2);
+      kernel.setArg<cl::Buffer>(index++, PanicButton->getDeviceBuffer());
+      
+      if(!hasCreatedKernels){
+	kernel_name = "resetComputeOverlapTree";
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	program = cl.createProgram(InitOverlapTreeSrc, pairValueDefines);
+	resetComputeOverlapTreeKernel = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
       }
-      kernel.setArg<cl::Buffer>(index++, ovLevel->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVolume->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVSfp->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovGamma1i->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovG->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovDV1->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovLastAtom->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovRootIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenStartIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCountTop->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCountBottom->getDeviceBuffer());
-#endif
-
-      kernel_name = "resetComputeOverlapTree";
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      program = cl.createProgram(InitOverlapTreeSrc, pairValueDefines);
-      resetComputeOverlapTreeKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
       index = 0;
       kernel = resetComputeOverlapTreeKernel;
       kernel.setArg<cl_int>(index++, num_sections);
@@ -1161,49 +1213,14 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++, ovAtomTreeSize->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ovLevel->getDeviceBuffer());
       
-
-
-      //pass 2
-      kernel_name = "ComputeOverlapTree";
-      replacements["KERNEL_NAME"] = kernel_name;
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      ComputeOverlapTreeKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
-      index = 0;
-      kernel = ComputeOverlapTreeKernel;
-      kernel.setArg<cl_int>(index++, num_sections);
-      kernel.setArg<cl::Buffer>(index++, ovTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, NIterations->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePaddedSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeLock->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, cl.getPosq().getDeviceBuffer() );
-      kernel.setArg<cl::Buffer>(index++, GaussianExponent->getDeviceBuffer() );
-      kernel.setArg<cl::Buffer>(index++, GaussianVolume->getDeviceBuffer() );
-      kernel.setArg<cl::Buffer>(index++, AtomicGamma->getDeviceBuffer() );
-      kernel.setArg<cl::Buffer>(index++, ovLevel->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVolume->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVSfp->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovGamma1i->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovG->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovDV1->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovLastAtom->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovRootIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenStartIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovProcessedFlag->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovOKtoProcessFlag->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenReported->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCountTop->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCountBottom->getDeviceBuffer());
-
       //pass 2 (1 pass kernel)
-      kernel_name = "ComputeOverlapTree_1pass";
-      replacements["KERNEL_NAME"] = kernel_name;
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      ComputeOverlapTree_1passKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
+      if(!hasCreatedKernels){
+	kernel_name = "ComputeOverlapTree_1pass";
+	replacements["KERNEL_NAME"] = kernel_name;
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	ComputeOverlapTree_1passKernel = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
       index = 0;
       kernel = ComputeOverlapTree_1passKernel;
       kernel.setArg<cl_int>(index++, num_sections);
@@ -1237,14 +1254,17 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++,  tree_pos_buffer_temp->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++,  i_buffer_temp->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++,  atomj_buffer_temp->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++,  PanicButton->getDeviceBuffer());
 
 
       //2-body volumes sort kernel
-      kernel_name = "SortOverlapTree2body";
-      replacements["KERNEL_NAME"] = kernel_name;
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      SortOverlapTree2bodyKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
+      if(!hasCreatedKernels){
+	kernel_name = "SortOverlapTree2body";
+	replacements["KERNEL_NAME"] = kernel_name;
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	SortOverlapTree2bodyKernel = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
       index = 0;
       kernel = SortOverlapTree2bodyKernel;
       kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
@@ -1261,17 +1281,14 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++, ovChildrenStartIndex->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
 
-
-
-
-
       //rescan kernels
-
-      kernel_name = "ResetRescanOverlapTree";
-      replacements["KERNEL_NAME"] = kernel_name;
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      ResetRescanOverlapTreeKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
+      if(!hasCreatedKernels){
+	kernel_name = "ResetRescanOverlapTree";
+	replacements["KERNEL_NAME"] = kernel_name;
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	ResetRescanOverlapTreeKernel = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
       index = 0;
       kernel = ResetRescanOverlapTreeKernel;
       kernel.setArg<cl_int>(index++, num_sections);
@@ -1282,11 +1299,13 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++, ovProcessedFlag->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ovOKtoProcessFlag->getDeviceBuffer());
 
-      kernel_name = "InitRescanOverlapTree";
-      replacements["KERNEL_NAME"] = kernel_name;
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      InitRescanOverlapTreeKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
+      if(!hasCreatedKernels){
+	kernel_name = "InitRescanOverlapTree";
+	replacements["KERNEL_NAME"] = kernel_name;
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	InitRescanOverlapTreeKernel = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
       index = 0;
       kernel = InitRescanOverlapTreeKernel;
       kernel.setArg<cl_int>(index++, num_sections);
@@ -1297,12 +1316,14 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++, ovLevel->getDeviceBuffer());
 
       //propagates atomic parameters (radii, gammas, etc) from the top to the bottom
-      //of the overlap tree, recomputes overlap volumes as it goes 
-      kernel_name = "RescanOverlapTree";
-      replacements["KERNEL_NAME"] = kernel_name;
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      RescanOverlapTreeKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
+      //of the overlap tree, recomputes overlap volumes as it goes
+      if(!hasCreatedKernels){
+	kernel_name = "RescanOverlapTree";
+	replacements["KERNEL_NAME"] = kernel_name;
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	RescanOverlapTreeKernel = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
       index = 0;
       kernel = RescanOverlapTreeKernel;
       kernel.setArg<cl_int>(index++, num_sections);
@@ -1332,10 +1353,12 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
 
 
       //seeds tree with van der Waals + GB gamma parameters
-      kernel_name = "InitOverlapTreeGammas_1body";
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      InitOverlapTreeGammasKernel_1body_W = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
+      if(!hasCreatedKernels){
+	kernel_name = "InitOverlapTreeGammas_1body";
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	InitOverlapTreeGammasKernel_1body_W = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
       index = 0;
       kernel = InitOverlapTreeGammasKernel_1body_W;
       kernel.setArg<cl_int>(index++, cl.getPaddedNumAtoms());
@@ -1354,11 +1377,13 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       //of the overlap tree,
       //it *does not* recompute overlap volumes
       //  used to prep calculations of volume derivatives of van der Waals energy
-      kernel_name = "RescanOverlapTreeGammas";
-      replacements["KERNEL_NAME"] = kernel_name;
-      if(verbose) cout << "compiling " << kernel_name << "... ";
-      RescanOverlapTreeGammasKernel_W = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
+      if(!hasCreatedKernels){
+	kernel_name = "RescanOverlapTreeGammas";
+	replacements["KERNEL_NAME"] = kernel_name;
+	if(verbose) cout << "compiling " << kernel_name << "... ";
+	RescanOverlapTreeGammasKernel_W = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
       index = 0;
       kernel = RescanOverlapTreeGammasKernel_W;
       kernel.setArg<cl_int>(index++, num_sections);
@@ -1394,17 +1419,25 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       defines["OV_WORK_GROUP_SIZE"] = cl.intToString(ov_work_group_size);
 
       map<string, string> replacements;
-      string file = cl.replaceStrings(OpenCLAGBNPKernelSources::GVolSelfVolume, replacements);
-      if(verbose) cout << "compiling file GVolSelfVolume.cl ... ";
-      cl::Program program = cl.createProgram(file, defines);
+      cl::Program program;
+      string kernel_name;
+      cl::Kernel kernel;
+      
+      kernel_name = "computeSelfVolumes";
+      if(!hasCreatedKernels){
+	string file = cl.replaceStrings(OpenCLAGBNPKernelSources::GVolSelfVolume, replacements);
+	if(verbose) cout << "compiling file GVolSelfVolume.cl ... ";
+	program = cl.createProgram(file, defines);
 
-      //accumulates self volumes and volume energy function (and forces)
-      //with the energy-per-unit-volume parameters (Gamma1i) currently loaded into tree
-      string kernel_name = "computeSelfVolumes";
-      if(verbose) cout << "compiling kernel " << kernel_name << " ... ";
-      computeSelfVolumesKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;      
-      cl::Kernel kernel = computeSelfVolumesKernel;
+	//accumulates self volumes and volume energy function (and forces)
+	//with the energy-per-unit-volume parameters (Gamma1i) currently loaded into tree
+
+	if(verbose) cout << "compiling kernel " << kernel_name << " ... ";
+	computeSelfVolumesKernel = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
+      kernel = computeSelfVolumesKernel;
+      if(verbose) cout << "setting arguments for kernel" << kernel_name << " ... " << endl;
       int index = 0;
       kernel.setArg<cl_int>(index++, num_sections);
       kernel.setArg<cl::Buffer>(index++, ovTreePointer->getDeviceBuffer());
@@ -1440,12 +1473,14 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       }
       kernel.setArg<cl::Buffer>(index++, selfVolumeBuffer->getDeviceBuffer());
 
-
+      
       //same as above but w/o updating self volumes
-      kernel_name = "computeVolumeEnergy";
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      computeVolumeEnergyKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;      
+      if(!hasCreatedKernels){
+	string kernel_name = "computeVolumeEnergy";
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	computeVolumeEnergyKernel = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
       kernel = computeVolumeEnergyKernel;
       index = 0;
       kernel.setArg<cl_int>(index++, num_sections);
@@ -1494,16 +1529,19 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
 
       
       map<string, string> replacements;
+      string kernel_name;
 
-
-      string file = OpenCLAGBNPKernelSources::GVolReduceTree;
-      if(verbose) cout << "compiling file GVolReduceTree.cl ... ";
-      cl::Program program = cl.createProgram(file, defines);
+      kernel_name = "reduceSelfVolumes_buffer";
+      if(!hasCreatedKernels){
+	string file = OpenCLAGBNPKernelSources::GVolReduceTree;
+	if(verbose) cout << "compiling file GVolReduceTree.cl ... ";
+	cl::Program program = cl.createProgram(file, defines);
       
-      string kernel_name = "reduceSelfVolumes_buffer";
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      reduceSelfVolumesKernel_buffer = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	reduceSelfVolumesKernel_buffer = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
+      if(verbose) cout << "setting arguments for kernel" << kernel_name << " ... " << endl;
       cl::Kernel kernel = reduceSelfVolumesKernel_buffer;
       int index = 0;
       kernel.setArg<cl_int>(index++, cl.getPaddedNumAtoms());
@@ -1558,19 +1596,25 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       int index;
       cl::Kernel kernel;
 
-      if(verbose) cout << "compiling file AGBNPBornRadii.cl" << " ... ";
-      file = cl.replaceStrings(OpenCLAGBNPKernelSources::AGBNPBornRadii, replacements);
-      program = cl.createProgram(file, defines);
-
+      if(!hasCreatedKernels){
+	if(verbose) cout << "compiling file AGBNPBornRadii.cl" << " ... ";
+	file = cl.replaceStrings(OpenCLAGBNPKernelSources::AGBNPBornRadii, replacements);
+	program = cl.createProgram(file, defines);
+      }
       int itable = 21;
       int num_values = 4*i4_table_size;
+      if(testF) delete testF;
       testF = OpenCLArray::create<cl_float>(cl, num_values, "testF");
+      if(testDerF) delete testDerF;
       testDerF = OpenCLArray::create<cl_float>(cl, num_values, "testDerF");
       kernel_name = "testLookup";
       // testLookup kernel
-      testLookupKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
+      if(!hasCreatedKernels){
+	testLookupKernel = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
       index = 0;
+      if(verbose) cout << "setting arguments for kernel" << kernel_name << " ... " << endl;
       kernel = testLookupKernel;
       kernel.setArg<cl_int>(index++, i4_table_size);
       kernel.setArg<cl_float>(index++, i4_rmin);
@@ -1585,10 +1629,12 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
 
       
       //initBornRadii kernel
-      kernel_name = "initBornRadii";
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      initBornRadiiKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
+      if(!hasCreatedKernels){
+	kernel_name = "initBornRadii";
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	initBornRadiiKernel = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
       index = 0;
       kernel = initBornRadiiKernel;
       kernel.setArg<cl_uint>(index++, cl.getPaddedNumAtoms()); //bufferSize
@@ -1607,10 +1653,12 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       }else{
 	kernel_name = "inverseBornRadii";
       }
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      //inverseBornRadii kernel
-      inverseBornRadiiKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
+      if(!hasCreatedKernels){
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	//inverseBornRadii kernel
+	inverseBornRadiiKernel = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
       index = 0;
       kernel = inverseBornRadiiKernel;
       kernel.setArg<cl::Buffer>(index++, cl.getPosq().getDeviceBuffer() );
@@ -1641,12 +1689,13 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       if(useLong) kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_long->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_real->getDeviceBuffer());
 
-
-      kernel_name = "reduceBornRadii";
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      //reduceBornRadii kernel
-      reduceBornRadiiKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
+      if(!hasCreatedKernels){
+	kernel_name = "reduceBornRadii";
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	//reduceBornRadii kernel
+	reduceBornRadiiKernel = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
       index = 0;
       kernel = reduceBornRadiiKernel;
       kernel.setArg<cl_uint>(index++, cl.getPaddedNumAtoms()); //bufferSize
@@ -1658,12 +1707,13 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++, invBornRadius_fp->getDeviceBuffer()); //derivative of filter function
       kernel.setArg<cl::Buffer>(index++, BornRadius->getDeviceBuffer());
 
-
-      kernel_name = "VdWEnergy";
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      //reduceBornRadii kernel
-      VdWEnergyKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
+      if(!hasCreatedKernels){
+	kernel_name = "VdWEnergy";
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	//reduceBornRadii kernel
+	VdWEnergyKernel = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
       index = 0;
       kernel = VdWEnergyKernel;
       kernel.setArg<cl::Buffer>(index++, alphaParam->getDeviceBuffer());
@@ -1673,12 +1723,13 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++, cl.getEnergyBuffer().getDeviceBuffer()); //master energy buffer
       kernel.setArg<cl::Buffer>(index++, testBuffer->getDeviceBuffer()); //VDw Energy for testing
       
-
-      kernel_name = "initVdWGBDerBorn";
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      //initVdWGBDerBorn kernel
-      initVdWGBDerBornKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
+      if(!hasCreatedKernels){
+	kernel_name = "initVdWGBDerBorn";
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	//initVdWGBDerBorn kernel
+	initVdWGBDerBornKernel = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
       index = 0;
       kernel = initVdWGBDerBornKernel;
       kernel.setArg<cl_uint>(index++, cl.getPaddedNumAtoms()); //bufferSize
@@ -1697,10 +1748,12 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       }else{
 	kernel_name = "VdWGBDerBorn";
       }
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      // VdWGBDerBorn kernel
-      VdWGBDerBornKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
+      if(!hasCreatedKernels){
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	// VdWGBDerBorn kernel
+	VdWGBDerBornKernel = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
       index = 0;
       kernel = VdWGBDerBornKernel;
       kernel.setArg<cl::Buffer>(index++, cl.getPosq().getDeviceBuffer() );
@@ -1738,11 +1791,13 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++, (useLong ? cl.getLongForceBuffer().getDeviceBuffer() : cl.getForceBuffers().getDeviceBuffer())); //master force buffer      
      
 
-      kernel_name = "reduceVdWGBDerBorn";
-      if(verbose) cout << "compiling " << kernel_name << " ... ";
-      //reduceVdWGBDerBorn kernel
-      reduceVdWGBDerBornKernel = cl::Kernel(program, kernel_name.c_str());
-      if(verbose) cout << " done. " << endl;
+      if(!hasCreatedKernels){
+	kernel_name = "reduceVdWGBDerBorn";
+	if(verbose) cout << "compiling " << kernel_name << " ... ";
+	//reduceVdWGBDerBorn kernel
+	reduceVdWGBDerBornKernel = cl::Kernel(program, kernel_name.c_str());
+	if(verbose) cout << " done. " << endl;
+      }
       index = 0;
       kernel = reduceVdWGBDerBornKernel;
       kernel.setArg<cl_uint>(index++, cl.getPaddedNumAtoms()); //bufferSize
@@ -1795,16 +1850,19 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       int index;
       cl::Kernel kernel;
 
-      if(verbose) cout << "compiling AGBNPGBEnergy.cl ... ";
-      file = cl.replaceStrings(OpenCLAGBNPKernelSources::AGBNPGBEnergy, replacements);
-      program = cl.createProgram(file, defines);
-      if(verbose) cout << " done. " << endl;
-
-      //initGBEnergy kernel
       kernel_name = "initGBEnergy";
-      if(verbose) cout << "compiling kernel " << kernel_name << " ... " ;
-      initGBEnergyKernel = cl::Kernel(program, kernel_name.c_str());
+      if(!hasCreatedKernels){
+	if(verbose) cout << "compiling AGBNPGBEnergy.cl ... ";
+	file = cl.replaceStrings(OpenCLAGBNPKernelSources::AGBNPGBEnergy, replacements);
+	program = cl.createProgram(file, defines);
+	if(verbose) cout << " done. " << endl;
+
+	//initGBEnergy kernel
+	if(verbose) cout << "compiling kernel " << kernel_name << " ... " ;
+	initGBEnergyKernel = cl::Kernel(program, kernel_name.c_str());
+      }
       index = 0;
+      if(verbose) cout << "setting arguments for kernel" << kernel_name << " ... " << endl;
       kernel = initGBEnergyKernel;
       kernel.setArg<cl_uint>(index++, cl.getPaddedNumAtoms()); //bufferSize
       kernel.setArg<cl_uint>(index++, num_compute_units);     //numBuffers
@@ -1821,8 +1879,10 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       }else{
 	kernel_name = "GBPairEnergy";
       }
-      if(verbose) cout << "compiling kernel " << kernel_name << " ... " ;
-      GBPairEnergyKernel = cl::Kernel(program, kernel_name.c_str());
+      if(!hasCreatedKernels){
+	if(verbose) cout << "compiling kernel " << kernel_name << " ... " ;
+	GBPairEnergyKernel = cl::Kernel(program, kernel_name.c_str());
+      }
       index = 0;
       kernel = GBPairEnergyKernel;
       kernel.setArg<cl::Buffer>(index++, cl.getPosq().getDeviceBuffer() );
@@ -1850,9 +1910,11 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
 
       
       //GB energy reduction kernel
-      kernel_name = "reduceGBEnergy";
-      if(verbose) cout << "compiling kernel " << kernel_name << " ... " ;
-      reduceGBEnergyKernel = cl::Kernel(program, kernel_name.c_str());
+      if(!hasCreatedKernels){
+	kernel_name = "reduceGBEnergy";
+	if(verbose) cout << "compiling kernel " << kernel_name << " ... " ;
+	reduceGBEnergyKernel = cl::Kernel(program, kernel_name.c_str());
+      }
       index = 0;
       kernel = reduceGBEnergyKernel;
       kernel.setArg<cl_uint>(index++, cl.getPaddedNumAtoms()); //bufferSize
@@ -2140,20 +2202,20 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   //------------------------------------------------------------------------------------------------------------
   // Tree construction
   //  
-  if(verbose_level > 2) cout << "Executing resetTreeKernel" << endl;
+  if(verbose) cout << "Executing resetTreeKernel" << endl;
   //here workgroups cycle through tree sections to reset the tree section
   cl.executeKernel(resetTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
-  if(verbose_level > 2) cout << "Executing resetBufferKernel" << endl;
+  if(verbose) cout << "Executing resetBufferKernel" << endl;
   // resets either ovAtomBuffer and long energy buffer
   cl.executeKernel(resetBufferKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
-  if(verbose_level > 2) cout << "Executing InitOverlapTreeKernel_1body_1" << endl;
+  if(verbose) cout << "Executing InitOverlapTreeKernel_1body_1" << endl;
   //fills up tree with 1-body overlaps
   cl.executeKernel(InitOverlapTreeKernel_1body_1, ov_work_group_size*num_compute_units, ov_work_group_size);
 
   // compute numbers of 2-body overlaps, that is children counts of 1-body overlaps
-  if(verbose_level > 2) cout << "Executing InitOverlapTreeCountKernel" << endl;
+  if(verbose) cout << "Executing InitOverlapTreeCountKernel" << endl;
   if(nb_reassign){
     int index = InitOverlapTreeCountKernel_first_nbarg;
     cl::Kernel kernel = InitOverlapTreeCountKernel;
@@ -2166,11 +2228,11 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   cl.executeKernel(InitOverlapTreeCountKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
  
-  if(verbose_level > 2) cout << "Executing reduceovCountBufferKernel" << endl;
+  if(verbose) cout << "Executing reduceovCountBufferKernel" << endl;
   // do a prefix sum of 2-body counts to compute children start indexes to store 2-body overlaps computed by InitOverlapTreeKernel below
   cl.executeKernel(reduceovCountBufferKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
   
-  if(verbose_level > 2) cout << "Executing InitOverlapTreeKernel" << endl;
+  if(verbose) cout << "Executing InitOverlapTreeKernel" << endl;
   if(nb_reassign){
     int index = InitOverlapTreeKernel_first_nbarg;
     cl::Kernel kernel = InitOverlapTreeKernel;
@@ -2182,24 +2244,43 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   }
   cl.executeKernel(InitOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
   
-  if(verbose_level > 2) cout << "Executing resetComputeOverlapTreeKernel" << endl;
+  if(verbose) cout << "Executing resetComputeOverlapTreeKernel" << endl;
   cl.executeKernel(resetComputeOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
-  if(verbose_level > 2) cout << "Executing ComputeOverlapTree_1passKernel" << endl;
+  if(verbose) cout << "Executing ComputeOverlapTree_1passKernel" << endl;
   cl.executeKernel(ComputeOverlapTree_1passKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+#ifdef NOTNOW
+  if(verbose) cout << "Executing enqueueReadBuffer() " << endl;
+  //cl.getQueue().enqueueReadBuffer(PanicButton->getDeviceBuffer(), CL_FALSE, 0, sizeof(int), pinnedPanicButtonMemory, NULL, &downloadPanicButtonEvent);
+  cl.getQueue().enqueueReadBuffer(PanicButton->getDeviceBuffer(), CL_TRUE, 0, sizeof(int), pinnedPanicButtonMemory, NULL, NULL);
+  //if(verbose) cout << "Executing downloadPanicButtonEvent.wait() " << endl;
+  //downloadPanicButtonEvent.wait();
+  if(verbose) cout << "done downloadPanicButtonEvent.wait() " << endl;
+#endif
+  //if(pinnedPanicButtonMemory[0] > 0){
+  vector<cl_int> panic_button(1);
+  PanicButton->download(panic_button);
+  if(panic_button[0] > 0){
+    cout << "Error: Tree size exceeded!" << endl;
+    hasInitializedKernels = false;
+    cl.setForcesValid(false);
+    return 0.0;
+  }
+
+  
   //------------------------------------------------------------------------------------------------------------
 
 
   //------------------------------------------------------------------------------------------------------------
   // Volume energy function 1
   //
-  if(verbose_level > 2) cout << "Executing resetSelfVolumesKernel" << endl;
+  if(verbose) cout << "Executing resetSelfVolumesKernel" << endl;
   cl.executeKernel(resetSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
   
-  if(verbose_level > 2) cout << "Executing computeSelfVolumesKernel" << endl;
+  if(verbose) cout << "Executing computeSelfVolumesKernel" << endl;
   cl.executeKernel(computeSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
-  if(verbose_level > 2) cout << "Executing reduceSelfVolumesKernel_buffer" << endl;
+  if(verbose) cout << "Executing reduceSelfVolumesKernel_buffer" << endl;
   cl.executeKernel(reduceSelfVolumesKernel_buffer, ov_work_group_size*num_compute_units, ov_work_group_size);
 
  if(verbose_level > 4){
@@ -2289,7 +2370,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   
 
   
-  if(verbose){
+  if(verbose_level > 3){
     vector<int> atom_pointer(cl.getPaddedNumAtoms());
     vector<double> vol_energies(total_tree_size);
     ovAtomTreePointer->download(atom_pointer);
@@ -2303,7 +2384,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
     cout << "Volume Energy 1:" << std::setprecision(8) << energy << endl;
   }
 
-  if(verbose){
+  if(verbose_level > 3){
     //print self volumes
     vector<float> self_volumes(cl.getPaddedNumAtoms());
     selfVolume->download(self_volumes);
@@ -2325,36 +2406,36 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   //
 
   //seeds tree with "negative" gammas and reduced radi
-  if(verbose_level > 2) cout << "Executing InitOverlapTreeKernel_1body_2 " << endl;
+  if(verbose) cout << "Executing InitOverlapTreeKernel_1body_2 " << endl;
   cl.executeKernel(InitOverlapTreeKernel_1body_2, ov_work_group_size*num_compute_units, ov_work_group_size);
 
-  if(verbose_level > 2) cout << "Executing ResetRescanOverlapTreeKernel" << endl;
+  if(verbose) cout << "Executing ResetRescanOverlapTreeKernel" << endl;
   cl.executeKernel(ResetRescanOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
   
-  if(verbose_level > 2) cout << "Executing InitRescanOverlapTreeKernel" << endl;
+  if(verbose) cout << "Executing InitRescanOverlapTreeKernel" << endl;
   cl.executeKernel(InitRescanOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
   
-  if(verbose_level > 2) cout << "Executing RescanOverlapTreeKernel" << endl;
+  if(verbose) cout << "Executing RescanOverlapTreeKernel" << endl;
   cl.executeKernel(RescanOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
   
-  if(verbose_level > 2) cout << "Executing resetSelfVolumesKernel" << endl;
+  if(verbose) cout << "Executing resetSelfVolumesKernel" << endl;
   cl.executeKernel(resetSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
-  if(verbose_level > 2) cout << "Executing resetBufferKernel" << endl;
+  if(verbose) cout << "Executing resetBufferKernel" << endl;
   // zero self-volume accumulator
   cl.executeKernel(resetBufferKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
   
-  if(verbose_level > 2) cout << "Executing computeSelfVolumesKernel" << endl;
+  if(verbose) cout << "Executing computeSelfVolumesKernel" << endl;
   cl.executeKernel(computeSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
   //update energyBuffer with volume energy 2
-  if(verbose_level > 2) cout << "Executing reduceSelfVolumesKernel_buffer" << endl;
+  if(verbose) cout << "Executing reduceSelfVolumesKernel_buffer" << endl;
   cl.executeKernel(reduceSelfVolumesKernel_buffer, ov_work_group_size*num_compute_units, ov_work_group_size);
 
 
 
 
-  if(verbose){
+  if(verbose_level > 3){
     vector<int> atom_pointer(cl.getPaddedNumAtoms());
     vector<double> vol_energies(total_tree_size);
     ovAtomTreePointer->download(atom_pointer);
@@ -2367,7 +2448,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
     cout << "Volume Energy 2:" << std::setprecision(8) << energy << endl;
   }
 
-  if(verbose){
+  if(verbose_level > 3){
     //print self volumes
     vector<float> self_volumes(cl.getPaddedNumAtoms());
     selfVolume->download(self_volumes);
@@ -2385,10 +2466,10 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   //------------------------------------------------------------------------------------------------------------
 
 #ifdef NOTNOW
-  if(verbose_level > 2) cout << "Executing testLookupKernel" << endl;
+  if(verbose) cout << "Executing testLookupKernel" << endl;
   cl.executeKernel(testLookupKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
   
-  if(verbose){
+  if(verbose_level > 3){
     // print lookup table results
     vector<float>f(4*i4_table_size);
     vector<float>derf(4*i4_table_size);
@@ -2406,10 +2487,10 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   //------------------------------------------------------------------------------------------------------------
   // Born radii
   //
-  if(verbose_level > 2) cout << "Executing initBornRadiiKernel" << endl;
+  if(verbose) cout << "Executing initBornRadiiKernel" << endl;
   cl.executeKernel(initBornRadiiKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
-  if(verbose_level > 2) cout << "Executing inverseBornRadiiKernel" << endl;
+  if(verbose) cout << "Executing inverseBornRadiiKernel" << endl;
   if(nb_reassign) {
     int index = inverseBornRadiiKernel_first_nbarg;
     cl::Kernel kernel = inverseBornRadiiKernel;
@@ -2441,10 +2522,10 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   }
 
   
-  if(verbose_level > 2) cout << "Executing reduceBornRadiiKernel" << endl;
+  if(verbose) cout << "Executing reduceBornRadiiKernel" << endl;
   cl.executeKernel(reduceBornRadiiKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
-  if(verbose){
+  if(verbose_level > 3){
     // prints out Born radii
     vector<float> born_radii(cl.getPaddedNumAtoms());
     vector<float> sf(cl.getPaddedNumAtoms());
@@ -2463,10 +2544,10 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   //Van der Waals dispersion energy function
   //
   //------------------------------------------------------------------------------------------------------------
-  if(verbose_level > 2) cout << "Executing vdwEnergyKernel" << endl;
+  if(verbose) cout << "Executing vdwEnergyKernel" << endl;
   cl.executeKernel(VdWEnergyKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
-  if(verbose){
+  if(verbose_level > 3){
     // get the VdW energy (sum over the atoms in the buffer)
     vector<float> vdw_energies(cl.getPaddedNumAtoms());
     testBuffer->download(vdw_energies);
@@ -2479,7 +2560,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   }
 
 
-  if(verbose){
+  if(verbose_level > 3){
     // get the BrU parameters
     vector<float> brw_params(cl.getPaddedNumAtoms());
     VdWDerBrW->download(brw_params);
@@ -2492,10 +2573,10 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   //------------------------------------------------------------------------------------------------------------
   //GB energy function
   //
-  if(verbose_level > 2) cout << "Executing initGBEnergyKernel" << endl;
+  if(verbose) cout << "Executing initGBEnergyKernel" << endl;
   cl.executeKernel(initGBEnergyKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
-  if(verbose_level > 2) cout << "Executing GBPairEnergyKernel" << endl;
+  if(verbose) cout << "Executing GBPairEnergyKernel" << endl;
   if(nb_reassign) {
     int index = GBPairEnergyKernel_first_nbarg;
     cl::Kernel kernel = GBPairEnergyKernel;
@@ -2507,10 +2588,10 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   }
   cl.executeKernel(GBPairEnergyKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
-  if(verbose_level > 2) cout << "Executing reduceGBEnergyKernel" << endl;
+  if(verbose) cout << "Executing reduceGBEnergyKernel" << endl;
   cl.executeKernel(reduceGBEnergyKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
-  if(verbose){
+  if(verbose_level > 5){
     // get the GB energy (sum over the atoms in the buffer)
     vector<float> gb_energies(cl.getPaddedNumAtoms()*num_compute_units);
     AccumulationBuffer1_real->download(gb_energies);
@@ -2522,7 +2603,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
     cout << "GB Energy: " << gb_energy << endl;
   }
 
-  if(verbose){
+  if(verbose_level > 3){
     // get the Y parameters
     vector<float> y_params(cl.getPaddedNumAtoms());
     GBDerY->download(y_params);
@@ -2531,7 +2612,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
     }
   }
 
-  if(verbose){
+  if(verbose_level > 3){
     // get the BrU parameters
     vector<float> bru_params(cl.getPaddedNumAtoms());
     GBDerBrU->download(bru_params);
@@ -2547,10 +2628,10 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   //------------------------------------------------------------------------------------------------------------
   //Born-radii related derivatives
   //
-  if(verbose_level > 2) cout << "Executing initVdWGBDerBornKernel" << endl;
+  if(verbose) cout << "Executing initVdWGBDerBornKernel" << endl;
   cl.executeKernel(initVdWGBDerBornKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
-  if(verbose_level > 2) cout << "Executing VdWGBDerBornKernel" << endl;
+  if(verbose) cout << "Executing VdWGBDerBornKernel" << endl;
   if(nb_reassign){
     int index = VdWGBDerBornKernel_first_nbarg;
     cl::Kernel kernel = VdWGBDerBornKernel;
@@ -2585,11 +2666,11 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
 
 
   
-  if(verbose_level > 2) cout << "Executing reduceVdWGBDerBornKernel" << endl;
+  if(verbose) cout << "Executing reduceVdWGBDerBornKernel" << endl;
   cl.executeKernel(reduceVdWGBDerBornKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
 
-  if(verbose){
+  if(verbose_level > 3){
     // get the U parameters
     vector<float> u_params(cl.getPaddedNumAtoms());
     GBDerU->download(u_params);
@@ -2599,7 +2680,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   }
 
 
-  if(verbose){
+  if(verbose_level > 3){
     // get the W parameters
     vector<float> w_params(cl.getPaddedNumAtoms());
     VdWDerW->download(w_params);
@@ -2613,25 +2694,25 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   //
 
   //seeds the top of the tree with van der Waals + GB gamma parameters
-  if(verbose_level > 2) cout << "Executing InitOverlapTreeGammasKernel_1body_W " << endl;
+  if(verbose) cout << "Executing InitOverlapTreeGammasKernel_1body_W " << endl;
   cl.executeKernel(InitOverlapTreeGammasKernel_1body_W, ov_work_group_size*num_compute_units, ov_work_group_size);
 
-  if(verbose_level > 2) cout << "Executing ResetRescanOverlapTreeKernel " << endl;
+  if(verbose) cout << "Executing ResetRescanOverlapTreeKernel " << endl;
   cl.executeKernel(ResetRescanOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
   
-  if(verbose_level > 2) cout << "Executing InitRescanOverlapTreeKernel " << endl;
+  if(verbose) cout << "Executing InitRescanOverlapTreeKernel " << endl;
   cl.executeKernel(InitRescanOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
   //propagates gamma atomic parameters from the top to the bottom
   //of the overlap tree
-  if(verbose_level > 2) cout << "Executing RescanOverlapTreeGammasKernel " << endl;
+  if(verbose) cout << "Executing RescanOverlapTreeGammasKernel " << endl;
   cl.executeKernel(RescanOverlapTreeGammasKernel_W, ov_work_group_size*num_compute_units, ov_work_group_size);
 
-  if(verbose_level > 2) cout << "Executing resetSelfVolumesKernel" << endl;
+  if(verbose) cout << "Executing resetSelfVolumesKernel" << endl;
   cl.executeKernel(resetSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
   
   //collect derivatives from volume energy function with van der Waals gamma parameters
-  if(verbose_level > 2) cout << "Executing computeVolumeEnergyKernel " << endl;
+  if(verbose) cout << "Executing computeVolumeEnergyKernel " << endl;
   cl.executeKernel(computeVolumeEnergyKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
 
@@ -2714,7 +2795,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   }
 #endif
 
-  if(verbose_level > 2) cout << "Done with AGBNP1" << endl;
+  if(verbose) cout << "Done with AGBNP1" << endl;
 
   return 0.0;
 }
@@ -2761,6 +2842,20 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool incl
 
   if(verbose_level > 2) cout << "Executing ComputeOverlapTree_1passKernel" << endl;
   cl.executeKernel(ComputeOverlapTree_1passKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+  
+  //    pinnedCountBuffer = new cl::Buffer(context.getContext(), CL_MEM_ALLOC_HOST_PTR, sizeof(int));
+  //    pinnedCountMemory = (int*) context.getQueue().enqueueMapBuffer(*pinnedCountBuffer, CL_TRUE, CL_MAP_READ, 0, sizeof(int));
+
+  //    cl::Event downloadCountEvent;
+  //cl.enqueueReadBuffer(PanicButton->getDeviceBuffer(), CL_FALSE, 0, sizeof(int), pinnedPanicButtonMemory, NULL, &downloadPanicButtonEvent); 
+  //
+
+  // downloadCountEvent.wait();
+    
+  //    forceRebuildNeighborList = true;
+  //    context.setForcesValid(false);
+
+  
   //------------------------------------------------------------------------------------------------------------
 
 
