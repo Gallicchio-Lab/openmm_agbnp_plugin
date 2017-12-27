@@ -67,8 +67,9 @@ OpenCLCalcAGBNPForceKernel::~OpenCLCalcAGBNPForceKernel() {
 
 static int _nov_ = 0;
 
+
 void OpenCLCalcAGBNPForceKernel::init_tree_size(int pad_modulo,
-					       vector<int>& noverlaps)  {
+						vector<int>& noverlaps_current)  {
   total_tree_size = 0;
   tree_size.clear();
   tree_pointer.clear();
@@ -76,6 +77,20 @@ void OpenCLCalcAGBNPForceKernel::init_tree_size(int pad_modulo,
   atom_tree_pointer.clear();
   natoms_in_tree.clear();
   first_atom.clear();
+
+  //The tree may be reinitialized multiple times due to too many overlaps.
+  //Remember the largest number of overlaps per atom because if it went over the max before it
+  //is likely to happen again
+  if(!has_saved_noverlaps){
+    saved_noverlaps.resize(cl.getNumAtoms());
+    for(int i=0;i<cl.getNumAtoms();i++) saved_noverlaps[i] = 0;
+    has_saved_noverlaps = true;
+  }
+  vector<int> noverlaps(cl.getNumAtoms());
+  for(int i=0;i<cl.getNumAtoms();i++){
+    noverlaps[i] = (saved_noverlaps[i] > noverlaps_current[i]) ? saved_noverlaps[i] : noverlaps_current[i];
+  }
+  for(int i=0;i<cl.getNumAtoms();i++) saved_noverlaps[i] = noverlaps[i];
 
   //assigns atoms to compute units (tree sections) in such a way that each compute unit gets
   //approximately equal number of overlaps
@@ -90,16 +105,19 @@ void OpenCLCalcAGBNPForceKernel::init_tree_size(int pad_modulo,
   //  for(int i=0;i < cl.getNumAtoms();i++){
   //  cout << "nov " << i << " noverlaps " << noverlaps[i] << " " <<  noverlaps_sum[i] << endl;
   //}
+  int max_n_overlaps = 0;
+  for(int i=0;i < cl.getNumAtoms();i++){
+    if (noverlaps[i] > max_n_overlaps) max_n_overlaps = noverlaps[i];
+  }
   
-
-  //average number of overlaps per section
   int n_overlaps_per_section;
   if(num_sections > 1){
     n_overlaps_per_section = n_overlaps_total/(num_sections - 1);
   }else{
     n_overlaps_per_section = n_overlaps_total;
   }
-
+  if (max_n_overlaps > n_overlaps_per_section) n_overlaps_per_section = max_n_overlaps;
+  
   //cout << "n_overlaps_per_section : " << n_overlaps_per_section << endl;
 
   
@@ -110,16 +128,14 @@ void OpenCLCalcAGBNPForceKernel::init_tree_size(int pad_modulo,
   for(int section = 0; section < num_sections; section++){
     natoms_in_tree[section] = 0;
   }
-  for(int i=1;i < cl.getNumAtoms();i++){
+  for(int i=0;i < cl.getNumAtoms();i++){
     int section = noverlaps_sum[i]/n_overlaps_per_section;
     compute_unit_of_atom[i] = section;
     natoms_in_tree[section] += 1;
     total_atoms_in_tree += 1;
   }
-
   
-  // computes size of tree sections
-  int offset = 0;
+  // computes sizes of tree sections
   vector<int> section_size(num_sections);
   for(int section = 0; section < num_sections; section++){
     section_size[section] = 0;
@@ -128,29 +144,20 @@ void OpenCLCalcAGBNPForceKernel::init_tree_size(int pad_modulo,
     int section = compute_unit_of_atom[i];
     section_size[section] += noverlaps[i];
   }
-  int max_size = 0;
-  for(int section = 0; section < num_sections; section++){
-    //cout << "Sn: section: " << section << " natoms " << natoms_in_tree[section] << " size " << section_size[section] << endl; 
-    if(section_size[section] > max_size){
-      max_size = section_size[section];
-    }
+  //double sizes and pad for extra buffer
+  for(int section=0;section < num_sections;section++){
+    int tsize = section_size[section] < 1 ? 1 : section_size[section];
+    tsize *= tree_size_boost;
+    int npadsize = pad_modulo*((tsize+pad_modulo-1)/pad_modulo);    
+    section_size[section] = npadsize;
   }
-  // double estimate
-  int size;
-  if(hasCreatedKernels){//done this before
-    tree_size_boost *= 2;
-  }
-  size = max_size * tree_size_boost; 
-
-  // now pad
-  int npadsize = pad_modulo*((size+pad_modulo-1)/pad_modulo);
 
   // set tree pointers
   tree_pointer.resize(num_sections);
-  offset = 0;
+  int offset = 0;
   for(int section = 0; section < num_sections; section++){
     tree_pointer[section] = offset;
-    offset += npadsize;
+    offset += section_size[section];
   }
 
   // set atom pointer in tree
@@ -158,20 +165,20 @@ void OpenCLCalcAGBNPForceKernel::init_tree_size(int pad_modulo,
   padded_tree_size.resize(num_sections);
   atom_tree_pointer.resize(cl.getPaddedNumAtoms());
   first_atom.resize(num_sections);
-  offset = 0;
+  int atom_offset = 0;
   for(int section = 0; section < num_sections; section++){
     tree_size[section] = 0;
-    padded_tree_size[section] = npadsize;
-    first_atom[section] = offset;
+    padded_tree_size[section] = section_size[section];
+    first_atom[section] = atom_offset;
     for(int i = 0; i <  natoms_in_tree[section]; i++){
-      int iat = offset + i;
-      int slot = section*npadsize + i;
+      int iat = atom_offset + i;
+      int slot = tree_pointer[section] + i;
       if(iat < total_atoms_in_tree){
 	atom_tree_pointer[iat] = slot;
       }
     }
-    total_tree_size += npadsize;
-    offset += natoms_in_tree[section];
+    total_tree_size += section_size[section];
+    atom_offset += natoms_in_tree[section];
   }
 
 }
@@ -449,7 +456,7 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
 
       if(verbose_level > 0) std::cout << "Tree size: " << total_tree_size << std::endl;
 
-      if(verbose_level > 2){
+      if(verbose_level > 0){
 	for(int i = 0; i < num_sections; i++){
 	  cout << "Tn: " << i << " " << tree_size[i] << " " << padded_tree_size[i] << " " << natoms_in_tree[i] << " " << tree_pointer[i] << " " << first_atom[i] << endl;
 	}
@@ -551,18 +558,11 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
 
       //sets up flag to detect when tree size is exceeded
       if(PanicButton) delete PanicButton;
-      PanicButton = OpenCLArray::create<cl_int>(cl, 1, "PanicButton");
-      vector<cl_int> panic_button(1);
-      panic_button[0] = 0; //init with zero
+      // pos 0 is general panic, pos 1 indicates execeeded temp buffer
+      PanicButton = OpenCLArray::create<cl_int>(cl, 2, "PanicButton");
+      panic_button.resize(2);
+      panic_button[0] = panic_button[1]  = 0;    //init with zero
       PanicButton->upload(panic_button);
-      
-#ifdef NOTNOW
-      //not sure how to use pinned memory for I/O of PanicButton flag
-      if(pinnedPanicButtonBuffer) delete pinnedPanicButtonBuffer;
-      pinnedPanicButtonBuffer = new cl::Buffer(cl.getContext(), CL_MEM_ALLOC_HOST_PTR, sizeof(int));
-      if(pinnedPanicButtonMemory) delete pinnedPanicButtonMemory;
-      pinnedPanicButtonMemory = (int*) cl.getQueue().enqueueMapBuffer(*pinnedPanicButtonBuffer, CL_TRUE, CL_MAP_READ, 0, sizeof(int));
-#endif
       
       // atomic reduction buffers, one for each tree section
       // used only if long int atomics are not available
@@ -618,13 +618,13 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       AtomicGamma = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms(), "AtomicGamma");
 
       //temp buffers to cache intermediate data in overlap tree construction (3-body and up)
-      //int smax = 64; // this is n*(n-1)/2 where n is the max number of neighbors per overlap
-      int smax = 256;//debug
-      //if(temp_buffer_size < 0) {
-      temp_buffer_size = ov_work_group_size*num_sections*smax;
-      //}else{
-      //	temp_buffer_size = 2*temp_buffer_size;
-      //}
+      if(!hasExceededTempBuffer) {//first time or panic for other reasons
+	int smax = 64; // this is n*(n-1)/2 where n is the max number of neighbors per overlap
+	temp_buffer_size = ov_work_group_size*num_sections*smax;//first time
+      }else{
+	temp_buffer_size = 2*temp_buffer_size;
+	hasExceededTempBuffer = false;
+      }
       if(gvol_buffer_temp) delete gvol_buffer_temp;
       gvol_buffer_temp = OpenCLArray::create<cl_float>(cl, temp_buffer_size, "gvol_buffer_temp");
       if(tree_pos_buffer_temp) delete tree_pos_buffer_temp;
@@ -725,6 +725,7 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++, ovProcessedFlag->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ovOKtoProcessFlag->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ovChildrenReported->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, PanicButton->getDeviceBuffer());
     }
 
 
@@ -2249,24 +2250,9 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
 
   if(verbose) cout << "Executing ComputeOverlapTree_1passKernel" << endl;
   cl.executeKernel(ComputeOverlapTree_1passKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
-#ifdef NOTNOW
-  if(verbose) cout << "Executing enqueueReadBuffer() " << endl;
-  //cl.getQueue().enqueueReadBuffer(PanicButton->getDeviceBuffer(), CL_FALSE, 0, sizeof(int), pinnedPanicButtonMemory, NULL, &downloadPanicButtonEvent);
-  cl.getQueue().enqueueReadBuffer(PanicButton->getDeviceBuffer(), CL_TRUE, 0, sizeof(int), pinnedPanicButtonMemory, NULL, NULL);
-  //if(verbose) cout << "Executing downloadPanicButtonEvent.wait() " << endl;
-  //downloadPanicButtonEvent.wait();
-  if(verbose) cout << "done downloadPanicButtonEvent.wait() " << endl;
-#endif
-  //if(pinnedPanicButtonMemory[0] > 0){
-  vector<cl_int> panic_button(1);
-  PanicButton->download(panic_button);
-  if(panic_button[0] > 0){
-    cout << "Error: Tree size exceeded!" << endl;
-    hasInitializedKernels = false;
-    cl.setForcesValid(false);
-    return 0.0;
-  }
 
+  //trigger non-blocking read of PanicButton, read it after next kernel below 
+  cl.getQueue().enqueueReadBuffer(PanicButton->getDeviceBuffer(), CL_TRUE, 0, 2*sizeof(int), &panic_button[0], NULL, &downloadPanicButtonEvent);
   
   //------------------------------------------------------------------------------------------------------------
 
@@ -2275,7 +2261,33 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   // Volume energy function 1
   //
   if(verbose) cout << "Executing resetSelfVolumesKernel" << endl;
+  //this kernel is protected (returns with no other work) in case of panic
   cl.executeKernel(resetSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  //check the result of the non-blocking read of PanicButton above
+  downloadPanicButtonEvent.wait();
+  if(panic_button[0] > 0){
+    if(verbose) cout << "Error: Tree size exceeded(2)!" << endl;
+    hasInitializedKernels = false; //forces reinitialization
+    cl.setForcesValid(false); //invalidate forces
+
+    if(panic_button[1] > 0){
+      if(verbose) cout << "Error: Temp Buffer exceeded(2)!" << endl;
+      hasExceededTempBuffer = true;//forces resizing of temp buffers
+    }
+    
+    if(verbose_level > 2){
+      cout << "Tree sizes:" << endl;
+      vector<cl_int> size(num_sections);
+      ovAtomTreeSize->download(size);
+      for(int section=0;section < num_sections; section++){
+	cout << size[section] << " ";
+      }
+      cout << endl;
+    }
+
+    return 0.0;
+  }
   
   if(verbose) cout << "Executing computeSelfVolumesKernel" << endl;
   cl.executeKernel(computeSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);

@@ -1280,6 +1280,7 @@ __kernel __attribute__((reqd_work_group_size(OV_WORK_GROUP_SIZE,1,1)))
 	  if(n_buffer >= buffer_size/ntrees){
 	    atomic_inc(&panic);
 	    atomic_inc(&PanicButton[0]);
+	    atomic_inc(&PanicButton[1]);
 	  }
 	}
 	barrier(CLK_LOCAL_MEM_FENCE);

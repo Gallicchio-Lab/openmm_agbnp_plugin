@@ -120,8 +120,9 @@ public:
     PanicButton = NULL;
     pinnedPanicButtonBuffer = NULL;
     pinnedPanicButtonMemory = NULL;
-    
+    hasExceededTempBuffer = false;    
     tree_size_boost = 2;
+    has_saved_noverlaps = false;
   }
 
     ~OpenCLCalcAGBNPForceKernel();
@@ -357,11 +358,14 @@ private:
 
     //flag to give up
     OpenMM::OpenCLArray* PanicButton;
+    vector<cl_int> panic_button;
     cl::Buffer* pinnedPanicButtonBuffer;
     int* pinnedPanicButtonMemory;
     cl::Event downloadPanicButtonEvent;
+    bool hasExceededTempBuffer;
     int tree_size_boost;
-    
+    bool has_saved_noverlaps;
+    vector<int> saved_noverlaps;
 };
 
 } // namespace AGBNPPlugin

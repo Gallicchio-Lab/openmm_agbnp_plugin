@@ -48,9 +48,11 @@ __kernel void resetSelfVolumes(const int ntrees,
 			       __global const int*   restrict ovChildrenCount,
 			       __global       int*   restrict ovProcessedFlag,
 			       __global       int*   restrict ovOKtoProcessFlag,
-			       __global       int*   restrict ovChildrenReported
+			       __global       int*   restrict ovChildrenReported,
+			       __global       int*   restrict PanicButton
 ){
     uint tree = get_group_id(0);      //initial tree
+    if(PanicButton[0] > 0) return;
     while (tree < ntrees){
 
       uint offset = ovTreePointer[tree];
