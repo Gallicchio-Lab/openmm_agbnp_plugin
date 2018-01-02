@@ -9,6 +9,7 @@ This implementation continues the support for the GaussVol model [3], previously
 Implementation of the AGBNP2 model [2] is in progress.
 
 Emilio Gallicchio <egallicchio@brooklyn.cuny.edu>
+
 Last Modified: January 2018
 
 
@@ -79,9 +80,9 @@ where `<openmm_dir>` is the OpenMM installation directory.
 ```
 #include "AGBNPForce.h"
 AGBNPForce* force = new AGBNPForce();
-force->setNonbondedMethod(CutoffNonPeriodic);
+force->setNonbondedMethod(CutoffNonPeriodic);//NoCutoff also accepted
 force->setCutoffDistance(1.2);
-force->setVersion(1); #set version to 0 for GVolSA
+force->setVersion(1); //set version to 0 for GaussVol
 system.addForce(force);
 for(int i=0;i<numParticles;i++){
    force->addParticle(radius[i], gamma[i], alpha[i], charge[i], ishydrogen[i]);      
@@ -104,9 +105,9 @@ from AGBNPplugin import AGBNPForce
 gb = AGBNPForce()
 gb.setNonbondedMethod(CutoffNonPeriodic) #NoCutoff also accepted
 gb.setCutoffDistance(1.2 * nanometer)
-gb.setVersion(1) #set version to 0 for GVolSA
+gb.setVersion(1) #set version to 0 for GaussVol
 for i in range(numParticles):
-   #only the atomic radius is relevant for GVolSA 
+   #only the atomic radius is relevant for GaussVol 
    gb.addParticle(radius[i], gamma[i], alpha[i], charge[i], ishydrogen[i])
 sys.addForce(gb)
 ```
