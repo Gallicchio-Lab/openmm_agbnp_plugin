@@ -1950,6 +1950,8 @@ double OpenCLCalcAGBNPForceKernel::executeGVolSA(ContextImpl& context, bool incl
     if(maxTiles < nb.getInteractingTiles().getSize()) {
       maxTiles = nb.getInteractingTiles().getSize();
       nb_reassign = true;
+      if(verbose){
+	cout << "Reassigning neighbor list ..." << endl;
     }
   }
   
@@ -2063,6 +2065,10 @@ double OpenCLCalcAGBNPForceKernel::executeGVolSA(ContextImpl& context, bool incl
 
   if(verbose_level > 2) cout << "Executing ComputeOverlapTree_1passKernel" << endl;
   cl.executeKernel(ComputeOverlapTree_1passKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+  //trigger non-blocking read of PanicButton, read it after next kernel below 
+  cl.getQueue().enqueueReadBuffer(PanicButton->getDeviceBuffer(), CL_TRUE, 0, 2*sizeof(int), &panic_button[0], NULL, &downloadPanicButtonEvent);
+
   //------------------------------------------------------------------------------------------------------------
 
 
@@ -2072,6 +2078,32 @@ double OpenCLCalcAGBNPForceKernel::executeGVolSA(ContextImpl& context, bool incl
   if(verbose_level > 2) cout << "Executing resetSelfVolumesKernel" << endl;
   cl.executeKernel(resetSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
+    //check the result of the non-blocking read of PanicButton above
+  downloadPanicButtonEvent.wait();
+  if(panic_button[0] > 0){
+    if(verbose) cout << "Error: Tree size exceeded(2)!" << endl;
+    hasInitializedKernels = false; //forces reinitialization
+    cl.setForcesValid(false); //invalidate forces
+
+    if(panic_button[1] > 0){
+      if(verbose) cout << "Error: Temp Buffer exceeded(2)!" << endl;
+      hasExceededTempBuffer = true;//forces resizing of temp buffers
+    }
+    
+    if(verbose){
+      cout << "Tree sizes:" << endl;
+      vector<cl_int> size(num_sections);
+      ovAtomTreeSize->download(size);
+      for(int section=0;section < num_sections; section++){
+	cout << size[section] << " ";
+      }
+      cout << endl;
+    }
+
+    return 0.0;
+  }
+
+  
   if(verbose_level > 2) cout << "Executing computeSelfVolumesKernel" << endl;
   cl.executeKernel(computeSelfVolumesKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
