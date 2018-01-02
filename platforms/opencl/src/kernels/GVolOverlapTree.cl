@@ -310,10 +310,9 @@ __kernel void InitOverlapTreeCount(
 
 }
 
-#ifdef NOTNOW
 // version of InitOverlapTreeCount optimized for CPU devices
-//  1 CPU core, instead of 32 as in the GPU-optimized version, loads a TILE_SIZE of interactions
-//  and process them 
+//  1 CPU core, instead of a minimum of 32 as in the GPU-optimized version, loads a TILE_SIZE of interactions
+//  and processes them 
 __kernel __attribute__((reqd_work_group_size(1,1,1))) 
 void InitOverlapTreeCount_cpu(
     __global const int* restrict ovAtomTreePointer,    //pointers to atom trees
@@ -349,6 +348,7 @@ void InitOverlapTreeCount_cpu(
     const ushort2 tileIndices = exclusionTiles[pos];
     uint x = tileIndices.x;
     uint y = tileIndices.y;
+    if(y>x) {uint t = y; y = x; x = t;};//swap so that y<x
 
     // Load the data for this tile in local memory
     for (int j = 0; j < TILE_SIZE; j++) {
@@ -357,7 +357,7 @@ void InitOverlapTreeCount_cpu(
       localData[j].g.w = global_gaussian_exponent[atom2];
       localData[j].v = global_gaussian_volume[atom2];
     }
-    
+
     for (unsigned int tgx = 0; tgx < TILE_SIZE; tgx++) {
       uint atom1 = y*TILE_SIZE+tgx;
       
@@ -365,9 +365,8 @@ void InitOverlapTreeCount_cpu(
       real4 posq1 = posq[atom1];
       real a1 = global_gaussian_exponent[atom1];
       real v1 = global_gaussian_volume[atom1];
-      
-      int atom1_tree_ptr = ovAtomTreePointer[atom1];
-      
+      int parent_slot = ovAtomTreePointer[atom1];
+
       for (unsigned int j = 0; j < TILE_SIZE; j++) {
 	uint atom2 = x*TILE_SIZE+j;
 	
@@ -378,13 +377,11 @@ void InitOverlapTreeCount_cpu(
 	
 	real4 delta = (real4) (posq2.xyz - posq1.xyz, 0);
 	real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
-
-	bool compute = atom1 < NUM_ATOMS_TREE && atom2 < NUM_ATOMS_TREE && r2 < CUTOFF_SQUARED;
-	//for diagonal tile make sure that each pair is processed only once	
-	if(y==x) compute = compute && atom1 < atom2;
+	
+	bool compute = atom1 < NUM_ATOMS_TREE && atom2 < NUM_ATOMS_TREE && atom1 < atom2 && r2 < CUTOFF_SQUARED;
 	if (compute) {
 	  COMPUTE_INTERACTION_COUNT
-	 }
+        }
       }
     }
   }
@@ -424,6 +421,7 @@ void InitOverlapTreeCount_cpu(
 	localData[localAtomIndex].posq = posq[j];
 	localData[localAtomIndex].g.w = global_gaussian_exponent[j];
 	localData[localAtomIndex].v = global_gaussian_volume[j];
+	localData[localAtomIndex].tree_pointer = ovAtomTreePointer[j];
       }
 #else
       unsigned int j = x*TILE_SIZE + localAtomIndex;
@@ -440,8 +438,11 @@ void InitOverlapTreeCount_cpu(
       real4 posq1 = posq[atom1];
       real a1 = global_gaussian_exponent[atom1];
       real v1 = global_gaussian_volume[atom1];
-      
-      int atom1_tree_ptr = ovAtomTreePointer[atom1];
+      int tree_pointer1 = ovAtomTreePointer[atom1];
+#ifndef USE_CUTOFF
+      //the parent is taken as the atom with the smaller index: w/o cutoffs atom1 < atom2 because y<x
+      int parent_slot = tree_pointer1;
+#endif
       
       for (unsigned int j = 0; j < TILE_SIZE; j++) {
 	// load atom2 parameters from local arrays
@@ -453,6 +454,7 @@ void InitOverlapTreeCount_cpu(
 	real r2 = delta.x*delta.x + delta.y*delta.y + delta.z*delta.z;
 #ifdef USE_CUTOFF
 	uint atom2 = atomIndices[j];
+	int tree_pointer2 =  localData[j].tree_pointer;
 #else
 	uint atom2 = x*TILE_SIZE + j;
 #endif
@@ -464,6 +466,10 @@ void InitOverlapTreeCount_cpu(
 	if(x == y) compute = compute && atom1 < atom2;
 #endif
 	if (compute){
+#ifdef USE_CUTOFF
+	  //the parent is taken as the atom with the smaller index
+	  int parent_slot = (atom1 < atom2) ? tree_pointer1 : tree_pointer2;
+#endif
 	  COMPUTE_INTERACTION_COUNT
 	}
       }
@@ -472,7 +478,6 @@ void InitOverlapTreeCount_cpu(
   }
   
 }
-#endif
 
 
 //this kernel counts the no. of 2-body overlaps for each atom, stores in ovChildrenCount
@@ -688,7 +693,7 @@ __kernel void InitOverlapTree(
   
 }
 
-#ifdef NOTNOW
+
 // version of InitOverlapTreeCount optimized for CPU devices
 //  1 CPU core, instead of 32 as in the GPU-optimized version, loads a TILE_SIZE of interactions
 //  and process them 
@@ -745,7 +750,7 @@ void InitOverlapTree_cpu(
     const ushort2 tileIndices = exclusionTiles[pos];
     uint x = tileIndices.x;
     uint y = tileIndices.y;
-
+    if(y>x) {uint t = y; y = x; x = t;};//swap so that y<x
 
     // Load the data for this tile in local memory
     for (int j = 0; j < TILE_SIZE; j++) {
@@ -765,8 +770,8 @@ void InitOverlapTree_cpu(
       real v1 = global_gaussian_volume[atom1];
       real gamma1 = global_atomic_gamma[atom1];
       
-      int atom1_tree_ptr = ovAtomTreePointer[atom1];
-      int atom1_children_start = ovChildrenStartIndex[atom1_tree_ptr];
+      int parent_slot = ovAtomTreePointer[atom1];
+      int parent_children_start = ovChildrenStartIndex[parent_slot];
       
       for (unsigned int j = 0; j < TILE_SIZE; j++) {
 	uint atom2 = x*TILE_SIZE+j;
@@ -784,6 +789,7 @@ void InitOverlapTree_cpu(
 	//for diagonal tile make sure that each pair is processed only once	
 	if(y==x) compute = compute && atom1 < atom2;
 	if (compute) {
+	  int child_atom = atom2;
 	  COMPUTE_INTERACTION_STORE1
 	 }
       }
@@ -825,6 +831,7 @@ void InitOverlapTree_cpu(
 	localData[localAtomIndex].g.w = global_gaussian_exponent[j];
 	localData[localAtomIndex].v = global_gaussian_volume[j];
 	localData[localAtomIndex].gamma = global_atomic_gamma[j];
+	localData[localAtomIndex].tree_pointer = ovAtomTreePointer[j];
       }
 #else
       unsigned int j = x*TILE_SIZE + localAtomIndex;
@@ -844,9 +851,12 @@ void InitOverlapTree_cpu(
       real a1 = global_gaussian_exponent[atom1];
       real v1 = global_gaussian_volume[atom1];
       real gamma1 = global_atomic_gamma[atom1];
-      
-      int atom1_tree_ptr = ovAtomTreePointer[atom1];
-      int atom1_children_start = ovChildrenStartIndex[atom1_tree_ptr];
+      int tree_pointer1 = ovAtomTreePointer[atom1];
+#ifndef USE_CUTOFF
+      //the parent is taken as the atom with the smaller index: w/o cutoffs atom1 < atom2 because y<x
+      int parent_slot = tree_pointer1;
+      int parent_children_start = ovChildrenStartIndex[parent_slot];
+#endif
       
       for (unsigned int j = 0; j < TILE_SIZE; j++) {
 
@@ -861,6 +871,7 @@ void InitOverlapTree_cpu(
 	
 #ifdef USE_CUTOFF
 	uint atom2 = atomIndices[j];
+	int tree_pointer2 = localData[j].tree_pointer;
 #else
 	uint atom2 = x*TILE_SIZE + j;
 #endif
@@ -872,6 +883,16 @@ void InitOverlapTree_cpu(
 	if(x == y) compute = compute && atom1 < atom2;
 #endif
 	if (compute){
+#ifdef USE_CUTOFF
+	  //the parent is taken as the atom with the smaller index
+	  bool ordered = atom1 < atom2;
+	  int parent_slot = (ordered) ? tree_pointer1 : tree_pointer2;
+	  int parent_children_start = ovChildrenStartIndex[parent_slot];
+	  int child_atom = (ordered) ? atom2 : atom1 ;
+	  if(!ordered) delta = -delta; //parent and child are reversed (atom2>atom1)
+#else
+	  int child_atom = atom2;	
+#endif
 	  COMPUTE_INTERACTION_STORE1
 	 }
 
@@ -880,7 +901,7 @@ void InitOverlapTree_cpu(
     pos++;
   }
 }
-#endif
+
 
 //this kernel initializes the tree to be processed by ComputeOverlapTree()
 //it assumes that 2-body overlaps are in place

@@ -88,7 +88,8 @@ void OpenCLCalcAGBNPForceKernel::init_tree_size(int pad_modulo,
   }
   vector<int> noverlaps(cl.getNumAtoms());
   for(int i=0;i<cl.getNumAtoms();i++){
-    noverlaps[i] = (saved_noverlaps[i] > noverlaps_current[i]) ? saved_noverlaps[i] : noverlaps_current[i];
+    noverlaps[i] = (saved_noverlaps[i] > noverlaps_current[i]) ? saved_noverlaps[i] : noverlaps_current[i] + 1;
+    //(the +1 above counts the 1-body overlap)
   }
   for(int i=0;i<cl.getNumAtoms();i++) saved_noverlaps[i] = noverlaps[i];
 
@@ -2228,10 +2229,15 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   }
   cl.executeKernel(InitOverlapTreeCountKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
+  
  
   if(verbose) cout << "Executing reduceovCountBufferKernel" << endl;
   // do a prefix sum of 2-body counts to compute children start indexes to store 2-body overlaps computed by InitOverlapTreeKernel below
   cl.executeKernel(reduceovCountBufferKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+
+
+
   
   if(verbose) cout << "Executing InitOverlapTreeKernel" << endl;
   if(nb_reassign){
@@ -2244,6 +2250,12 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
     kernel.setArg<cl::Buffer>(index++, nb.getExclusionTiles().getDeviceBuffer());
   }
   cl.executeKernel(InitOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
+
+
+
+  
+
+
   
   if(verbose) cout << "Executing resetComputeOverlapTreeKernel" << endl;
   cl.executeKernel(resetComputeOverlapTreeKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
@@ -2276,7 +2288,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
       hasExceededTempBuffer = true;//forces resizing of temp buffers
     }
     
-    if(verbose_level > 2){
+    if(verbose){
       cout << "Tree sizes:" << endl;
       vector<cl_int> size(num_sections);
       ovAtomTreeSize->download(size);
@@ -2295,7 +2307,62 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   if(verbose) cout << "Executing reduceSelfVolumesKernel_buffer" << endl;
   cl.executeKernel(reduceSelfVolumesKernel_buffer, ov_work_group_size*num_compute_units, ov_work_group_size);
 
- if(verbose_level > 4){
+
+  
+  
+  
+  if(false){
+    vector<int> size(num_sections);
+    vector<int> niter(num_sections);
+    ovAtomTreeSize->download(size);
+    cout << "Sizes: ";
+    for(int section = 0; section < num_sections; section++){
+      std::cout << size[section] << " ";
+    }
+    std::cout << endl;
+    NIterations->download(niter);
+    cout << "Niter: ";
+    for(int section = 0; section < num_sections; section++){
+      std::cout << niter[section] << " ";
+    }
+    std::cout << endl;
+
+  }
+
+
+
+
+  
+
+  
+  if(verbose_level > 3){
+    vector<int> atom_pointer(cl.getPaddedNumAtoms());
+    vector<double> vol_energies(total_tree_size);
+    ovAtomTreePointer->download(atom_pointer);
+    ovVolEnergy->download(vol_energies);
+    double energy = 0;
+    for(int i=0;i<total_atoms_in_tree;i++){
+      int slot = atom_pointer[i];
+      energy += vol_energies[slot];
+      cout << "EV1: " << i << "  " << vol_energies[slot] << endl;
+    }
+    cout << "Volume Energy 1:" << std::setprecision(8) << energy << endl;
+  }
+
+  if(verbose_level > 3){
+    //print self volumes
+    vector<float> self_volumes(cl.getPaddedNumAtoms());
+    selfVolume->download(self_volumes);
+    double energy = 0;
+    for(int i=0;i<numParticles;i++){
+      cout << "self_volume(1): " << i << "  " << self_volumes[i] << " " << gammaVector1[i] << endl;
+      energy += gammaVector1[i]*self_volumes[i];
+    }
+    std::cout << "Volume Energy 1 (from self volumes): " << std::setprecision(8) << energy << endl;
+  }
+
+
+   if(verbose_level > 4){
     float self_volume = 0.0;
     vector<cl_float> self_volumes(total_tree_size);
     vector<cl_float> volumes(total_tree_size);
@@ -2355,61 +2422,6 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
     //std::cout << "Volume (from self volumes):" << self_volume <<std::endl;
   }
 
-  
-  
-  
-  if(false){
-    vector<int> size(num_sections);
-    vector<int> niter(num_sections);
-    ovAtomTreeSize->download(size);
-    cout << "Sizes: ";
-    for(int section = 0; section < num_sections; section++){
-      std::cout << size[section] << " ";
-    }
-    std::cout << endl;
-    NIterations->download(niter);
-    cout << "Niter: ";
-    for(int section = 0; section < num_sections; section++){
-      std::cout << niter[section] << " ";
-    }
-    std::cout << endl;
-
-  }
-
-
-
-
-  
-
-  
-  if(verbose_level > 3){
-    vector<int> atom_pointer(cl.getPaddedNumAtoms());
-    vector<double> vol_energies(total_tree_size);
-    ovAtomTreePointer->download(atom_pointer);
-    ovVolEnergy->download(vol_energies);
-    double energy = 0;
-    for(int i=0;i<total_atoms_in_tree;i++){
-      int slot = atom_pointer[i];
-      energy += vol_energies[slot];
-      cout << "EV1: " << i << "  " << vol_energies[slot] << endl;
-    }
-    cout << "Volume Energy 1:" << std::setprecision(8) << energy << endl;
-  }
-
-  if(verbose_level > 3){
-    //print self volumes
-    vector<float> self_volumes(cl.getPaddedNumAtoms());
-    selfVolume->download(self_volumes);
-    double energy = 0;
-    for(int i=0;i<numParticles;i++){
-      cout << "self_volume(1): " << i << "  " << self_volumes[i] << " " << gammaVector1[i] << endl;
-      energy += gammaVector1[i]*self_volumes[i];
-    }
-    std::cout << "Volume Energy 1 (from self volumes): " << std::setprecision(8) << energy << endl;
-  }
-
-
-  
 
   //------------------------------------------------------------------------------------------------------------
   //------------------------------------------------------------------------------------------------------------
@@ -2445,6 +2457,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   cl.executeKernel(reduceSelfVolumesKernel_buffer, ov_work_group_size*num_compute_units, ov_work_group_size);
 
 
+  
 
 
   if(verbose_level > 3){
@@ -2514,6 +2527,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   }
   cl.executeKernel(inverseBornRadiiKernel, ov_work_group_size*num_compute_units, ov_work_group_size);
 
+
   if(verbose_level > 5 && !useLong){
     vector<float> inv_br_buffer(cl.getPaddedNumAtoms()*num_compute_units);
     AccumulationBuffer1_real->download(inv_br_buffer);
@@ -2549,7 +2563,8 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
       gvol_force->getParticleParameters(i, radius, gamma, alpha, charge, ishydrogen);
       cout << "BR " << i << "  " << 10*born_radii[i] << "  " << radius << "  " << sf[i] << endl;
     }
-  }    
+  }
+  
   //------------------------------------------------------------------------------------------------------------
 
   //------------------------------------------------------------------------------------------------------------
@@ -2632,7 +2647,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
       cout << "BrU: " << i << " " << bru_params[i] << endl;
     }
   }
-
+  
   //------------------------------------------------------------------------------------------------------------
 
 
