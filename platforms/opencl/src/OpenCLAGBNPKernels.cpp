@@ -1950,7 +1950,7 @@ double OpenCLCalcAGBNPForceKernel::executeGVolSA(ContextImpl& context, bool incl
     if(maxTiles < nb.getInteractingTiles().getSize()) {
       maxTiles = nb.getInteractingTiles().getSize();
       nb_reassign = true;
-      if(verbose){
+      if(verbose)
 	cout << "Reassigning neighbor list ..." << endl;
     }
   }
