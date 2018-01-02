@@ -9,7 +9,7 @@ This implementation continues the support for the GaussVol model [3], previously
 Implementation of the AGBNP2 model [2] is in progress.
 
 Emilio Gallicchio <egallicchio@brooklyn.cuny.edu>
-Last Modified: October 2017
+Last Modified: January 2018
 
 
 ## License
@@ -72,6 +72,46 @@ python test_agbnp.py
 ```
 
 where `<openmm_dir>` is the OpenMM installation directory.
+
+
+## C++ API
+
+```
+#include "AGBNPForce.h"
+AGBNPForce* force = new AGBNPForce();
+force->setNonbondedMethod(CutoffNonPeriodic);
+force->setCutoffDistance(1.2);
+force->setVersion(1); #set version to 0 for GVolSA
+system.addForce(force);
+for(int i=0;i<numParticles;i++){
+   force->addParticle(radius[i], gamma[i], alpha[i], charge[i], ishydrogen[i]);      
+}
+```
+
+* `radius`: van der Waals atomic radius (`double`)
+* `gamma`: surface tension parameter (`double`)
+* `alpha`: solute-solvent dispersion interaction parameter (`double`)
+* `charge`: atomic charge in atomic units (`double`)
+* `ishydrogen`: whether the atom is a hydrogen atom (`bool`)
+
+Units: kJ/mol and nanometer.
+
+
+## Python API
+
+```
+from AGBNPplugin import AGBNPForce
+gb = AGBNPForce()
+gb.setNonbondedMethod(CutoffNonPeriodic) #NoCutoff also accepted
+gb.setCutoffDistance(1.2 * nanometer)
+gb.setVersion(1) #set version to 0 for GVolSA
+for i in range(numParticles):
+   #only the atomic radius is relevant for GVolSA 
+   gb.addParticle(radius[i], gamma[i], alpha[i], charge[i], ishydrogen[i])
+sys.addForce(gb)
+```
+
+The meaning of the parameters is the same as for the C++ API above.
 
 ## Relevant references:
 
