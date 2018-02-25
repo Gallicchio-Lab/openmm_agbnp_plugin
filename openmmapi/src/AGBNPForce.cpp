@@ -12,7 +12,7 @@ using namespace AGBNPPlugin;
 using namespace OpenMM;
 using namespace std;
 
-AGBNPForce::AGBNPForce() : nonbondedMethod(NoCutoff), cutoffDistance(1.0), version(1) {
+AGBNPForce::AGBNPForce() : nonbondedMethod(NoCutoff), cutoffDistance(1.0), version(1), solvent_radius(0.14) {
 }
 
 int AGBNPForce::addParticle(double radius, double gamma, double vdw_alpha, double charge, bool ishydrogen){

@@ -108,6 +108,10 @@ public:
      */
     void setCutoffDistance(double distance);
 
+    double getSolventRadius() const {
+      return solvent_radius;
+    }
+    
     void updateParametersInContext(OpenMM::Context& context);
 
     // version number: AGBNP version 1 or 2, version 0 is GVolSA
@@ -125,6 +129,7 @@ private:
     NonbondedMethod nonbondedMethod;
     double cutoffDistance;
     unsigned int version; //1 or 2
+    double solvent_radius;
 };
 
 /**
