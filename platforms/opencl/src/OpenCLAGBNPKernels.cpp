@@ -279,7 +279,7 @@ void OpenCLCalcAGBNPForceKernel::initialize(const System& system, const AGBNPFor
 	radiusVector2[i] = (cl_float) radius;
 	vdwrad[i] = radius; //double version for lookup table below
 	
-	atom_ishydrogen[i] = ishydrogen;
+	atom_ishydrogen[i] = ishydrogen ? 1 : 0;
 	ishydrogenVector[i] = ishydrogen ? 1 : 0;
 
 	// for surface-area energy use gamma/radius_offset
@@ -383,7 +383,7 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       //run CPU version once to estimate sizes
       GaussVol *gvol;
       std::vector<RealVec> positions;
-      std::vector<bool> ishydrogen;
+      std::vector<int> ishydrogen;
       std::vector<RealOpenMM> radii;
       std::vector<RealOpenMM> gammas;
       //outputs
@@ -408,7 +408,7 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
 	radii[i] = r + SA_DR;
 	gammas[i] = energy_density_param;
 	if(h) gammas[i] = 0.0;
-	ishydrogen[i] = h;
+	ishydrogen[i] = h ? 1 : 0;
       }
       gvol = new GaussVol(numParticles, radii, gammas, ishydrogen);
       vector<mm_float4> posq; 

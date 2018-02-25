@@ -159,7 +159,7 @@ class AGBNPI4LookupTable {
 
 class AGBNPI42DLookupTable {
  public:
-  AGBNPI42DLookupTable(const vector<double>& Radii, const vector<bool>& ishydrogen,
+  AGBNPI42DLookupTable(const vector<double>& Radii, const vector<int>& ishydrogen,
 		       const unsigned int size, 
 		       const double rmin, const double rmax,
 		       const unsigned int version);

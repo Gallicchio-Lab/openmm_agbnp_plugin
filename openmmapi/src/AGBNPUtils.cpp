@@ -130,7 +130,7 @@ AGBNPI4LookupTable::AGBNPI4LookupTable(const unsigned int size,
 
 //sets of overlap look-up tables indexed in term of bij = Ri/Rj
 //input radii are van der Waals radii (small radii)
-AGBNPI42DLookupTable::AGBNPI42DLookupTable(const vector<double>& Radii, const vector<bool>& ishydrogen,
+AGBNPI42DLookupTable::AGBNPI42DLookupTable(const vector<double>& Radii, const vector<int>& ishydrogen,
 					   const unsigned int rnodes_count, 
 					   const double rmin, const double rmax,
 					   const unsigned int version){

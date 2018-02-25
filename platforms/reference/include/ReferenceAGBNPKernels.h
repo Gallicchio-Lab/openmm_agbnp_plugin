@@ -71,7 +71,7 @@ private:
     //inputs
     int numParticles;
     std::vector<RealVec> positions;
-    std::vector<bool> ishydrogen;
+    std::vector<int> ishydrogen;
     std::vector<RealOpenMM> radii_vdw;
     std::vector<RealOpenMM> radii_large;
     std::vector<RealOpenMM> gammas;
@@ -85,6 +85,7 @@ private:
     std::vector<RealOpenMM> inverse_born_radius;
     std::vector<RealOpenMM> inverse_born_radius_fp;
     std::vector<RealOpenMM> born_radius;
+    double solvent_radius;
     
     double executeGVolSA(OpenMM::ContextImpl& context, bool includeForces, bool includeEnergy);
     double executeAGBNP1(OpenMM::ContextImpl& context, bool includeForces, bool includeEnergy);

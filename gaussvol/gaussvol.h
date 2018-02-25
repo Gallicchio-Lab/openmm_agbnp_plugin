@@ -105,7 +105,7 @@ class GaussVol {
  public: 
   /* Creates/Initializes a GaussVol instance*/
   GaussVol(const int natoms, vector<RealOpenMM> &radii, 
-  	   vector<RealOpenMM> &gammas, vector<bool> &ishydrogen_in);
+  	   vector<RealOpenMM> &gammas, vector<int> &ishydrogen_in);
 
   /* Terminate/Delete GaussVol  */
   ~GaussVol( void ){
@@ -164,7 +164,7 @@ class GaussVol {
   vector<RealVec> grad1, grad2;
   vector<RealOpenMM> self_volume1, self_volume2;
   vector<RealOpenMM> free_volume1, free_volume2;
-  vector<bool> ishydrogen;
+  vector<int> ishydrogen;
 };
 
 #endif //GAUSSVOL_H

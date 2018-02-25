@@ -304,7 +304,7 @@ private:
     vector<float> atomic_gamma;
     OpenMM::OpenCLArray* AtomicGamma;
 
-    vector<bool> atom_ishydrogen;
+    vector<int> atom_ishydrogen;
     
     int niterations;
 
