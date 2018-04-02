@@ -119,7 +119,8 @@ AGBNPI4LookupTable::AGBNPI4LookupTable(const unsigned int size,
   vector<double> x(size);
   vector<double> y(size);
   double gvol12_factor = 0.0; //default for AGBNP1
-  if(version == 2) gvol12_factor = 2.0; //default for AGBNP2
+  //maybe not doing this after all
+  //if(version == 2) gvol12_factor = 2.0; //default for AGBNP2
   for(unsigned int i = 0; i < size ; i++){
     x[i] = i*dr + rmin;
     double s = switching_function(x[i], xa, xb);
@@ -141,7 +142,9 @@ AGBNPI42DLookupTable::AGBNPI42DLookupTable(const vector<double>& Radii, const ve
   for(int i = 0; i < Radii.size() ; i++){
     unique_radii_i.insert(Radii[i]); //screened atom: small radii
   }
-  double roffset = (version == 2) ? AGBNP_RADIUS_INCREMENT : 0.0; 
+  //maybe not using this for AGBNP2 after all
+  //double roffset = (version == 2) ? AGBNP_RADIUS_INCREMENT : 0.0;
+  double roffset = 0.0; 
   for(int i = 0; i < Radii.size() ; i++){
     //screener atoms get "large" radii with AGBNP2
     if(!ishydrogen[i]) unique_radii_j.insert(Radii[i]+roffset); //hydrogens never descreen

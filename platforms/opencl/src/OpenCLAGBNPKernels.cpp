@@ -410,14 +410,17 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
 	if(h) gammas[i] = 0.0;
 	ishydrogen[i] = h ? 1 : 0;
       }
-      gvol = new GaussVol(numParticles, radii, gammas, ishydrogen);
+      gvol = new GaussVol(numParticles, ishydrogen);
       vector<mm_float4> posq; 
       cl.getPosq().download(posq);
       for(int i=0;i<numParticles;i++){
  	positions[i] = RealVec((RealOpenMM)posq[i].x,(RealOpenMM)posq[i].y,(RealOpenMM)posq[i].z);
       }
-
-      gvol->compute_tree(positions);
+      vector<RealOpenMM> volumes(numParticles);
+      for(int i = 0; i < numParticles; i++){
+	volumes[i] = 4.*M_PI*pow(radii[i],3)/3.;
+      }
+      gvol->compute_tree(positions, radii, volumes, gammas);
       gvol->compute_volume(positions, volume, vol_energy, vol_force, free_volume, self_volume);
       vector<int> noverlaps(cl.getPaddedNumAtoms());
       for(int i = 0; i<cl.getPaddedNumAtoms(); i++) noverlaps[i] = 0;

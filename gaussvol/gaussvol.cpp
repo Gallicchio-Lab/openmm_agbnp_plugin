@@ -100,7 +100,9 @@ static bool goverlap_compare( const GOverlap &overlap1, const GOverlap &overlap2
 
 static int init_overlap_tree(GOverlap_Tree &tree,
 			     int natoms, vector<RealVec> &pos,
-			     vector<RealOpenMM> &radius, vector<RealOpenMM> &gamma,
+			     vector<RealOpenMM> &radius, //atomic radii
+			     vector<RealOpenMM> &volume, //atomic volumes
+			     vector<RealOpenMM> &gamma,
 			     vector<int> &ishydrogen){
   GOverlap overlap;
   
@@ -125,12 +127,11 @@ static int init_overlap_tree(GOverlap_Tree &tree,
   /* list of atoms start at slot #1 */
   for(int iat=0; iat<natoms; iat++){
     RealOpenMM a = KFC/(radius[iat]*radius[iat]);
-    RealOpenMM volume = ishydrogen[iat]>0 ? 0.0 : 4.*PI*pow(radius[iat],3)/3.;
     overlap.level = 1;
-    overlap.g.v = volume;
+    overlap.g.v = volume[iat];
     overlap.g.a = a;
     overlap.g.c = pos[iat];
-    overlap.volume = volume;
+    overlap.volume = volume[iat];
     overlap.dv1 = RealVec(0,0,0);
     overlap.dvv1 = 1.; //dVi/dVi
     overlap.self_volume = 0.;
@@ -298,7 +299,10 @@ static int rescan_r(GOverlap_Tree &tree, int slot){
 
 /*rescan the tree to recompute the volumes, does not modify the tree */
 static int rescan_tree_v(GOverlap_Tree &tree, 
-			 int natoms, vector<RealVec> &pos, vector<RealOpenMM> &radius, vector<RealOpenMM> &gamma,
+			 int natoms, vector<RealVec> &pos,
+			 vector<RealOpenMM> &radius,
+			 vector<RealOpenMM> &volume,
+			 vector<RealOpenMM> &gamma,
 			 vector<int> &ishydrogen){
 
   int slot;
@@ -316,13 +320,12 @@ static int rescan_tree_v(GOverlap_Tree &tree,
   slot = 1;
   for(int iat=0;iat<natoms;iat++, slot++){
     RealOpenMM a = KFC/(radius[iat]*radius[iat]);
-    RealOpenMM volume = ishydrogen[iat]>0 ? 0.0 : 4.*PI*pow(radius[iat],3)/3.;
     ov = &(tree.overlaps[slot]);
     ov->level = 1;
-    ov->g.v = volume;
+    ov->g.v = volume[iat];
     ov->g.a = a;
     ov->g.c = pos[iat];
-    ov->volume = volume;
+    ov->volume = volume[iat];
     ov->dv1 = RealVec(0,0,0);
     ov->dvv1 = 1.; //dVi/dVi
     ov->self_volume = 0.;
@@ -396,9 +399,10 @@ static int compute_andadd_children_r(GOverlap_Tree &tree, int root){
 }
 
 static int compute_overlap_tree_r(GOverlap_Tree &tree,
-				  int natoms, vector<RealVec> &pos, vector<RealOpenMM> &radius, 
+				  int natoms, vector<RealVec> &pos, vector<RealOpenMM> &radius,
+				  vector<RealOpenMM> &volume,
 				  vector<RealOpenMM> &gamma, vector<int> &ishydrogen){
-  init_overlap_tree(tree, natoms, pos, radius, gamma, ishydrogen);
+  init_overlap_tree(tree, natoms, pos, radius, volume, gamma, ishydrogen);
   for(int slot = 1; slot <= natoms ; slot++){
     compute_andadd_children_r(tree, slot);
   }
@@ -533,31 +537,6 @@ static int compute_andadd_children_seq(GOverlap_Tree &tree, int root){
   return 1;
 }
 
-
-/* same as compute_overlap_tree_r() but computes 2-body first, then completes recursively
-   this mimics the GPU algorithm
- */
-static int compute_overlap_tree_seq(GOverlap_Tree &tree,
-				  int natoms, vector<RealVec> &pos, vector<RealOpenMM> &radius, 
-				  vector<RealOpenMM> &gamma, vector<int> &ishydrogen){
-  init_overlap_tree(tree, natoms, pos, radius, gamma, ishydrogen);
-  // compute 2-body only
-  for(int slot = 1; slot <= natoms ; slot++){
-    compute_andadd_children_seq(tree, slot);
-  }
-  // now run recursively on the 3-body
-  int end2body = 0;
-  for(int slot = 1; slot <= tree.natoms; slot++){
-    if(tree.overlaps[slot].children_startindex > 0) end2body = tree.overlaps[slot].children_startindex;
-  }
-  for(int slot = natoms+1; slot <= end2body ; slot++){
-    compute_andadd_children_r(tree, slot);
-  }
-  
-  return 1;
-}
-
-
 /* print overlaps up to 2-body */
 static void print_flat_tree_2body(GOverlap_Tree &tree){
   int end = 0;
@@ -623,30 +602,20 @@ void GOverlap_Tree::print_tree(void){
   }
 }
 
-
-GaussVol::GaussVol(const int natoms, vector<RealOpenMM> &radii, 
-		   vector<RealOpenMM> &gammas, vector<int>& ishydrogen_in){   
+// version of constructor with atomic volumes
+GaussVol::GaussVol(const int natoms, vector<int>& ishydrogen_in){   
    tree.natoms = natoms;
-   radius1 = radii;
-   gamma = gammas;
    ishydrogen = ishydrogen_in;
+   grad.resize(natoms);
+   self_volume.resize(natoms);
+   free_volume.resize(natoms);   
+}
 
-   radius2.resize(natoms);
-   grad1.resize(natoms);
-   grad2.resize(natoms);
-   self_volume1.resize(natoms);
-   free_volume1.resize(natoms);   
-   self_volume2.resize(natoms);
-   free_volume2.resize(natoms);   
 
-   //for(int i = 0; i<natoms; i++){
-   //  cout << i << " " << radius1[i] << " " << gamma[i] << " " << radius2[i] << " " << ishydrogen[i] << endl;
-   //}
-   //cout << natoms << " " << radius1.size() << " " << gamma.size() << " " << ishydrogen.size() << endl;
- }
-
-void GaussVol::compute_tree(vector<RealVec> &positions){
-  compute_overlap_tree_r(tree, tree.natoms, positions, radius1, gamma, ishydrogen);
+void GaussVol::compute_tree(vector<RealVec> &positions,
+			    vector<RealOpenMM> &radii, vector<RealOpenMM> &volumes, 
+			    vector<RealOpenMM> &gammas){
+  compute_overlap_tree_r(tree, tree.natoms, positions, radii, volumes, gammas, ishydrogen);
 }
 
 
@@ -658,52 +627,25 @@ void GaussVol::compute_volume(vector<RealVec> &positions,
   compute_volume2_r(tree, 
 		    tree.natoms, positions,
 		    volume, energy, 
-		    grad1, 
+		    grad, 
 		    free_volume, self_volume); 
-  for(int i = 0; i < tree.natoms; ++i) force[i] = -grad1[i];
+  for(int i = 0; i < tree.natoms; ++i) force[i] = -grad[i];
 }
 
-
+//rescan to compute a subset of overlap volumes with radii smaller than ones used to
+//set up the tree with compute_tree()
 void GaussVol::rescan_tree_volumes(vector<RealVec> &positions,
-				   vector<RealOpenMM> &radius,
-				   vector<RealOpenMM> &gamma){
-  rescan_tree_v(tree, tree.natoms, positions, radius, gamma, ishydrogen);
+				   vector<RealOpenMM> &radii,
+				   vector<RealOpenMM> &volumes,
+				   vector<RealOpenMM> &gammas){
+  rescan_tree_v(tree, tree.natoms, positions, radii, volumes, gammas, ishydrogen);
 }
 
-void GaussVol::rescan_tree_gammas(vector<RealOpenMM> &gamma){
-  rescan_tree_g(tree, tree.natoms, gamma);
+//set new gammas on tree
+void GaussVol::rescan_tree_gammas(vector<RealOpenMM> &gammas){
+  rescan_tree_g(tree, tree.natoms, gammas);
 }
 
-void GaussVol::compute_surface(const int init,
-			 vector<RealVec> &positions,
-			 RealOpenMM &energy,
-			 vector<RealVec> &force,
-			 vector<RealOpenMM> &surface_areas){
-   RealOpenMM volume1, volume2, energy1, energy2;
-   bool verbose = false;
-   int natoms = tree.natoms;
-   _nov_ = 0;
-
-   GaussVol::compute_tree(positions);
-   GaussVol::compute_volume(positions, volume1, energy1, grad1, 
-			    free_volume1, self_volume1);
-   if(verbose){
-     cout << "Self Volumes:" << endl;
-     float mol_volume = 0;
-     for(int i = 0; i < natoms; ++i) mol_volume += self_volume1[i];
-     for(int i = 0; i < natoms; ++i) cout << i << " " << self_volume1[i] << endl;
-     cout << "Mol Volume:" << mol_volume << endl;
-   }
-
-   for(int i = 0; i < natoms; ++i) radius2[i] = radius1[i] - SA_DR;
-   GaussVol::rescan_tree_volumes(positions, radius2, gamma);
-   GaussVol::compute_volume(positions, volume2, energy2, grad2, 
-			      free_volume2, self_volume2);
-   energy = energy1 - energy2;
-   if(verbose) cout << "E: " << energy1 << " " << energy2 << endl;
-   for(int i = 0; i < natoms; ++i) force[i] = -(grad1[i] - grad2[i]);
-   for(int i = 0; i < natoms; ++i) surface_areas[i] = (self_volume1[i] - self_volume2[i])/SA_DR; 
- }
 
 int nchildren_under_slot_r(GOverlap_Tree &tree, int slot){
   int n = 0;

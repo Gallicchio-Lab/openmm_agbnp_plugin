@@ -1,7 +1,7 @@
 /* -------------------------------------------------------------------------- *
  *                                 GaussVol                                   *
  * -------------------------------------------------------------------------- *
- * This file is part of the AGBNP3 implicit solvent model software            *
+ * This file is part of the AGBNP/OpenMM implicit solvent model software      *
  * implementation funded by the National Science Foundation under grant:      *
  * NSF SI2 1440665  "SI2-SSE: High-Performance Software for Large-Scale       *
  * Modeling of Binding Equilibria"                                            *
@@ -10,17 +10,17 @@
  * Authors: Emilio Gallicchio <egallicchio@brooklyn.cuny.edu>                 *
  * Contributors:                                                              *
  *                                                                            *
- *  GaussVol is free software: you can redistribute it and/or modify          *
+ *  AGBNP/OpenMM is free software: you can redistribute it and/or modify      *
  *  it under the terms of the GNU Lesser General Public License version 3     *
  *  as published by the Free Software Foundation.                             *
  *                                                                            *
- *  GaussVol is distributed in the hope that it will be useful,               *
+ *  AGBNP/OpenMM is distributed in the hope that it will be useful,           *
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of            *
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the             *
  *  GNU General Public License for more details.                              *
  *                                                                            *
  *  You should have received a copy of the GNU General Public License         *
- *  along with GaussVol.  If not, see <http://www.gnu.org/licenses/>.         *
+ *  along with AGBNP/OpenMM.  If not, see <http://www.gnu.org/licenses/>      *
  *                                                                            *
  * -------------------------------------------------------------------------- */
 
@@ -61,6 +61,12 @@ using namespace OpenMM;
 //volume cutoffs in switching function
 #define VOLMINA (0.01f*ANG3)
 #define VOLMINB (0.1f*ANG3)
+
+//volume cutoffs for MS spheres
+#define VOLMINMSA (0.5f*ANG3)
+#define VOLMINMSB (1.0f*ANG3)
+
+
 
 //radius offset for surf energy calc.
 #define SA_DR (0.5f*ANG)
@@ -104,26 +110,17 @@ class GaussVol {
 
  public: 
   /* Creates/Initializes a GaussVol instance*/
-  GaussVol(const int natoms, vector<RealOpenMM> &radii, 
-  	   vector<RealOpenMM> &gammas, vector<int> &ishydrogen_in);
-
+  GaussVol(const int natoms, vector<int> &ishydrogen_in);
+  
   /* Terminate/Delete GaussVol  */
   ~GaussVol( void ){
     tree.overlaps.clear();
   };
   
-  //reset atomic radii
-  void set_radii(vector<RealOpenMM> &radii){
-    radius1 = radii;
-  }
-
-  //reset atomic gammas
-  void set_gammas(vector<RealOpenMM> &gammas){
-    gamma = gammas;  
-  }
-  
   //constructs the tree
-  void compute_tree(vector<RealVec> &positions);
+  void compute_tree(vector<RealVec> &positions,
+		    vector<RealOpenMM> &radii, vector<RealOpenMM> &volumes,
+		    vector<RealOpenMM> &gammas);
 
   /* returns GaussVol volume area energy function and forces */
   /* also returns atomic free-volumes and self-volumes */
@@ -135,19 +132,12 @@ class GaussVol {
 
   //rescan the tree resetting gammas and volumes
   void rescan_tree_volumes(vector<RealVec> &positions,
-			   vector<RealOpenMM> &radius,
-			   vector<RealOpenMM> &gamma);
+			   vector<RealOpenMM> &radii,
+			   vector<RealOpenMM> &volumes,
+			   vector<RealOpenMM> &gammas);
 
   //rescan the tree resetting gammas only
   void rescan_tree_gammas(vector<RealOpenMM> &gamma);
-
-  /* returns GaussVol surface area energy function and forces */
-  /* also returns atomic free-volumes, self-volumes, and surface areas */
-  void compute_surface(const int init,
-		       vector<RealVec> &positions,
-		       RealOpenMM &energy,
-		       vector<RealVec> &force,
-		       vector<RealOpenMM> &surface_areas);
 
   // returns number of overlaps for each atom 
   void getstat(vector<int>& nov);
@@ -158,12 +148,9 @@ class GaussVol {
   
  private:
   GOverlap_Tree tree;
-  vector<RealOpenMM> radius1;
-  vector<RealOpenMM> radius2;
-  vector<RealOpenMM> gamma;
-  vector<RealVec> grad1, grad2;
-  vector<RealOpenMM> self_volume1, self_volume2;
-  vector<RealOpenMM> free_volume1, free_volume2;
+  vector<RealVec> grad;
+  vector<RealOpenMM> self_volume;
+  vector<RealOpenMM> free_volume;
   vector<int> ishydrogen;
 };
 

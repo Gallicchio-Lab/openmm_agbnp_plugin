@@ -90,9 +90,24 @@ private:
     double executeGVolSA(OpenMM::ContextImpl& context, bool includeForces, bool includeEnergy);
     double executeAGBNP1(OpenMM::ContextImpl& context, bool includeForces, bool includeEnergy);
     double executeAGBNP2(OpenMM::ContextImpl& context, bool includeForces, bool includeEnergy);
+
+
     
 };
 
+
+ //class to record MS particles
+ class MSParticle {
+ public:
+   double vol;
+   double freevol;
+   double selfvol;
+   RealVec pos;
+   int parent1;
+   int parent2;
+ };
+
+ 
 } // namespace AGBNPPlugin
 
 #endif /*REFERENCE_AGBNP_KERNELS_H_*/
