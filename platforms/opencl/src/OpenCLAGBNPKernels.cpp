@@ -420,7 +420,10 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       for(int i = 0; i < numParticles; i++){
 	volumes[i] = 4.*M_PI*pow(radii[i],3)/3.;
       }
-      gvol->compute_tree(positions, radii, volumes, gammas);
+      gvol->setRadii(radii);      
+      gvol->setVolumes(volumes);
+      gvol->setGammas(gammas);
+      gvol->compute_tree(positions);
       gvol->compute_volume(positions, volume, vol_energy, vol_force, free_volume, self_volume);
       vector<int> noverlaps(cl.getPaddedNumAtoms());
       for(int i = 0; i<cl.getPaddedNumAtoms(); i++) noverlaps[i] = 0;

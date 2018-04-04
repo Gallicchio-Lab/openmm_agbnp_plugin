@@ -79,6 +79,28 @@ class GaussianVca {
   RealVec  c; /* center */
 };
 
+// switching function used in Gaussian overlap function
+RealOpenMM pol_switchfunc(RealOpenMM gvol, RealOpenMM volmina, RealOpenMM volminb, RealOpenMM &sp);
+
+/* overlap between two Gaussians represented by a (V,c,a) triplet
+   V: volume of Gaussian
+   c: position of Gaussian
+   a: exponential coefficient
+
+   g(x) = V (a/pi)^(3/2) exp(-a(x-c)^2)
+
+   this version is based on V=V(V1,V2,r1,r2,alpha)
+   alpha = (a1 + a2)/(a1 a2)
+
+   dVdr is (1/r)*(dV12/dr)
+   dVdV is dV12/dV1 
+   dVdalpha is dV12/dalpha
+   d2Vdalphadr is (1/r)*d^2V12/dalpha dr
+   d2VdVdr is (1/r) d^2V12/dV1 dr
+
+*/
+RealOpenMM ogauss_alpha(GaussianVca &g1, GaussianVca &g2, GaussianVca &g12, RealOpenMM &dVdr, RealOpenMM &dVdV, RealOpenMM &sfp);
+
 /* an overlap */
 class GOverlap {
   public:
@@ -99,28 +121,163 @@ class GOverlap {
 };
 
 
+/* overlap comparison function */
+bool goverlap_compare( const GOverlap &overlap1, const GOverlap &overlap2);
+
+
+/*
+  A collection of, mainly, recursive routines to constructs and analyze the overlap tree.
+  Not meant to be called directly. It is used by GaussVol.
+ */
 class GOverlap_Tree {
  public:
+  GOverlap_Tree(int natoms){
+    this->natoms = natoms;
+  }
+
+  ~GOverlap_Tree(void){
+    overlaps.clear();
+  }
+
+  //intializes the tree at 1-body level
+  int init_overlap_tree(vector<RealVec> &pos,
+			vector<RealOpenMM> &radii, //atomic radii
+			vector<RealOpenMM> &volumes, //atomic volumes
+			vector<RealOpenMM> &gammas,
+			vector<int> &ishydrogen);
+  
+  // adds to the tree the children of overlap identified by "parent_index" in the tree
+  int add_children(int parent_index, vector<GOverlap> &children_overlaps);
+
+  /* scans the siblings of overlap identified by "root_index" to create children overlaps,
+   returns them into the "children_overlaps" buffer: (root) + (atom) -> (root, atom) */
+  int compute_children(int root_index, vector<GOverlap> &children_overlaps);
+
+  //grow the tree with more children starting at the given root slot (recursive)
+  int compute_andadd_children_r(int root);
+  
+  //compute the tree starting from the 1-body level
+  int compute_overlap_tree_r(vector<RealVec> &pos, vector<RealOpenMM> &radius,
+			     vector<RealOpenMM> &volume,
+			     vector<RealOpenMM> &gamma, vector<int> &ishydrogen);
+
+  /* compute volumes, energy of the overlap at slot and calls itself recursively to get 
+     the volumes of the children */
+  int compute_volume_underslot2_r(
+     int slot,
+     RealOpenMM &psi1i, RealOpenMM &f1i, RealVec &p1i, //subtree accumulators for free volume
+     RealOpenMM &psip1i, RealOpenMM &fp1i, RealVec &pp1i, //subtree accumulators for self volume
+     RealOpenMM &energy1i, RealOpenMM &fenergy1i, RealVec &penergy1i, //subtree accumulators for volume-based energy
+     vector<RealVec>  &dv,          //gradients of volume-based energy				
+     vector<RealOpenMM> &free_volume, //atomic free volumes
+     vector<RealOpenMM> &self_volume  //atomic self volumes
+				  );
+  
+  /* recursively traverses tree and computes volumes, etc. */
+  int compute_volume2_r(vector<RealVec> &pos,
+			RealOpenMM &volume, RealOpenMM &energy, 
+			vector<RealVec> &dv, vector<RealOpenMM> &free_volume,
+			vector<RealOpenMM> &self_volume);
+
+  /*rescan the sub-tree to recompute the volumes, does not modify the tree */
+  int rescan_r(int slot);
+  
+  /*rescan the tree to recompute the volumes, does not modify the tree */
+  int rescan_tree_v(vector<RealVec> &pos,
+		    vector<RealOpenMM> &radii,
+		    vector<RealOpenMM> &volumes,
+		    vector<RealOpenMM> &gammas,
+		    vector<int> &ishydrogen);
+
+  /*rescan the sub-tree to recompute the gammas, does not modify the volumes nor the tree */
+  int rescan_gamma_r(int slot);
+
+  /*rescan the tree to recompute the gammas only, does not modify volumes and the tree */
+  int rescan_tree_g(vector<RealOpenMM> &gammas);
+  
+  //print the contents of the tree
+  void print_tree(void);
+
+  //print the contents of the tree (recursive)
+  void print_tree_r(int slot);
+
+  //counts number of overlaps under the one given
+  int nchildren_under_slot_r(int slot);
+
   int natoms;
   vector<GOverlap> overlaps; //the root is at index 0, atoms are at 1..natoms+1
-  void print_tree(void);
 };
 
+/*
+A class that implements the Gaussian description of an object (molecule) made of a overlapping spheres
+ */
 class GaussVol {
-
  public: 
   /* Creates/Initializes a GaussVol instance*/
-  GaussVol(const int natoms, vector<int> &ishydrogen_in);
+  GaussVol(const int natoms,
+	   vector<int> &ishydrogen){
+    tree = new GOverlap_Tree(natoms);
+    this->natoms = natoms;
+    this->radii.resize(natoms);
+    for(int i=0;i<natoms;i++) radii[i] = 1.;
+    this->volumes.resize(natoms);
+    for(int i=0;i<natoms;i++) volumes[i] = 0.;
+    this->gammas.resize(natoms);
+    for(int i=0;i<natoms;i++) gammas[i] = 0.;
+    this->ishydrogen = ishydrogen;
+    grad.resize(natoms);
+    self_volume.resize(natoms);
+    free_volume.resize(natoms);
+  }
+  GaussVol(const int natoms,
+	   vector<RealOpenMM> &radii,
+	   vector<RealOpenMM> &volumes,
+	   vector<RealOpenMM> &gammas,
+	   vector<int> &ishydrogen){
+    tree = new GOverlap_Tree(natoms);
+    this->natoms = natoms;
+    this->radii = radii;
+    this->volumes = volumes;
+    this->gammas = gammas;
+    this->ishydrogen = ishydrogen;
+    grad.resize(natoms);
+    self_volume.resize(natoms);
+    free_volume.resize(natoms);
+  }
+
   
-  /* Terminate/Delete GaussVol  */
-  ~GaussVol( void ){
-    tree.overlaps.clear();
-  };
+  int setRadii(vector<RealOpenMM> &radii){
+    if(natoms == radii.size()){
+      this->radii = radii;
+      return natoms;
+    }else{
+      throw OpenMMException("setRadii: number of atoms does not match");
+      return -1;
+    }
+  }
+
+  int setVolumes(vector<RealOpenMM> &volumes){
+    if(natoms == volumes.size()){
+      this->volumes = volumes;
+      return natoms;
+    }else{
+      throw OpenMMException("setVolumes: number of atoms does not match");
+      return -1;
+    }
+  }
+
+  int setGammas(vector<RealOpenMM> &gammas){
+    if(natoms == gammas.size()){
+      this->gammas = gammas;
+      return natoms;
+    }else{
+      throw OpenMMException("setGammas: number of atoms does not match");
+      return -1;
+    }
+  }
   
   //constructs the tree
-  void compute_tree(vector<RealVec> &positions,
-		    vector<RealOpenMM> &radii, vector<RealOpenMM> &volumes,
-		    vector<RealOpenMM> &gammas);
+  void compute_tree(vector<RealVec> &positions);
 
   /* returns GaussVol volume area energy function and forces */
   /* also returns atomic free-volumes and self-volumes */
@@ -130,28 +287,33 @@ class GaussVol {
 		      vector<RealVec> &force,
 		      vector<RealOpenMM> &free_volume,  vector<RealOpenMM> &self_volume);
 
-  //rescan the tree resetting gammas and volumes
-  void rescan_tree_volumes(vector<RealVec> &positions,
-			   vector<RealOpenMM> &radii,
-			   vector<RealOpenMM> &volumes,
-			   vector<RealOpenMM> &gammas);
+  //rescan the tree after resetting gammas, radii and volumes
+  void rescan_tree_volumes(vector<RealVec> &positions);
 
-  //rescan the tree resetting gammas only
-  void rescan_tree_gammas(vector<RealOpenMM> &gamma);
+  //rescan the tree resetting gammas only with current values
+  void rescan_tree_gammas(void);
 
   // returns number of overlaps for each atom 
   void getstat(vector<int>& nov);
 
   void print_tree(void){
-    tree.print_tree();
+    tree->print_tree();
   }
+
+
   
  private:
-  GOverlap_Tree tree;
+  GOverlap_Tree *tree;
+
+  int natoms;
+  vector<RealOpenMM> radii;
+  vector<RealOpenMM> volumes;
+  vector<RealOpenMM> gammas;
+  vector<int> ishydrogen;
+  
   vector<RealVec> grad;
   vector<RealOpenMM> self_volume;
   vector<RealOpenMM> free_volume;
-  vector<int> ishydrogen;
 };
 
 #endif //GAUSSVOL_H

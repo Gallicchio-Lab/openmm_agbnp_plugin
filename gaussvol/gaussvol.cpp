@@ -15,7 +15,7 @@ static int _nov_ = 0;
 
 
 /* overlap volume switching function + 1st derivative */
-static RealOpenMM pol_switchfunc(RealOpenMM gvol, RealOpenMM volmina, RealOpenMM volminb, RealOpenMM &sp){
+RealOpenMM pol_switchfunc(RealOpenMM gvol, RealOpenMM volmina, RealOpenMM volminb, RealOpenMM &sp){
 
   RealOpenMM swf = 0.0f;
   RealOpenMM swfp = 1.0f;
@@ -57,7 +57,7 @@ static RealOpenMM pol_switchfunc(RealOpenMM gvol, RealOpenMM volmina, RealOpenMM
    d2VdVdr is (1/r) d^2V12/dV1 dr
 
 */
-static RealOpenMM ogauss_alpha(GaussianVca &g1, GaussianVca &g2, GaussianVca &g12, RealOpenMM &dVdr, RealOpenMM &dVdV, RealOpenMM &sfp){
+RealOpenMM ogauss_alpha(GaussianVca &g1, GaussianVca &g2, GaussianVca &g12, RealOpenMM &dVdr, RealOpenMM &dVdV, RealOpenMM &sfp){
   RealOpenMM d2, dx, dy, dz;
   RealVec c1 = g1.c;
   RealVec c2 = g2.c;
@@ -92,22 +92,24 @@ static RealOpenMM ogauss_alpha(GaussianVca &g1, GaussianVca &g2, GaussianVca &g1
   return s*gvol;
 }
 
+
 /* overlap comparison function */
-static bool goverlap_compare( const GOverlap &overlap1, const GOverlap &overlap2) {
+bool goverlap_compare( const GOverlap &overlap1, const GOverlap &overlap2) {
   /* order by volume, larger first */
   return overlap1.volume > overlap2.volume;
 }
 
-static int init_overlap_tree(GOverlap_Tree &tree,
-			     int natoms, vector<RealVec> &pos,
-			     vector<RealOpenMM> &radius, //atomic radii
-			     vector<RealOpenMM> &volume, //atomic volumes
-			     vector<RealOpenMM> &gamma,
-			     vector<int> &ishydrogen){
+
+int GOverlap_Tree::init_overlap_tree(vector<RealVec> &pos,
+				 vector<RealOpenMM> &radius, //atomic radii
+				 vector<RealOpenMM> &volume, //atomic volumes
+				 vector<RealOpenMM> &gamma,
+				 vector<int> &ishydrogen){
+
   GOverlap overlap;
   
   // reset tree
-  tree.overlaps.clear();
+  overlaps.clear();
 
   /* slot 0 contains the master tree information, children = all of the atoms */
   overlap.level = 0;
@@ -122,16 +124,17 @@ static int init_overlap_tree(GOverlap_Tree &tree,
   overlap.children_startindex = 1;
   overlap.children_count = natoms;
 
-  tree.overlaps.push_back(overlap);
+  overlaps.push_back(overlap);
 
   /* list of atoms start at slot #1 */
   for(int iat=0; iat<natoms; iat++){
     RealOpenMM a = KFC/(radius[iat]*radius[iat]);
+    RealOpenMM vol = ishydrogen[iat] > 0 ? 0. : volume[iat];
     overlap.level = 1;
-    overlap.g.v = volume[iat];
+    overlap.g.v = vol;
     overlap.g.a = a;
     overlap.g.c = pos[iat];
-    overlap.volume = volume[iat];
+    overlap.volume = vol;
     overlap.dv1 = RealVec(0,0,0);
     overlap.dvv1 = 1.; //dVi/dVi
     overlap.self_volume = 0.;
@@ -141,37 +144,23 @@ static int init_overlap_tree(GOverlap_Tree &tree,
     overlap.atom = iat; 
     overlap.children_startindex = -1;
     overlap.children_count = -1;
-    tree.overlaps.push_back(overlap);
+    overlaps.push_back(overlap);
   }
-
-
-#ifdef TEST_SORT
-  {
-    for(int i=0;i<=natoms;i++){
-      cout << "OV1: " << tree.overlaps[i].volume << endl;
-    }
-    sort(tree.overlaps.begin(), tree.overlaps.end(), goverlap_compare);
-    for(int i=0;i<=natoms;i++){
-      cout << "OV2: " << tree.overlaps[i].volume << endl;
-    }
-  }
-#endif
-
 
   return 1;
 }
 
 /* adds to the tree the children of overlap identified by "parent_index" in the tree */
-static int add_children(GOverlap_Tree &tree, int parent_index, vector<GOverlap> &children_overlaps){
+int GOverlap_Tree::add_children(int parent_index, vector<GOverlap> &children_overlaps){
   int i, ip, slot;
 
   /* adds children starting at the last slot */
-  int start_index = tree.overlaps.size();
+  int start_index = overlaps.size();
   
   int noverlaps = children_overlaps.size();
 
   /* retrieves address of root overlap */
-  GOverlap *root = &(tree.overlaps[parent_index]);
+  GOverlap *root = &(overlaps[parent_index]);
 
   /* registers list of children */
   root->children_startindex = start_index;
@@ -194,7 +183,7 @@ static int add_children(GOverlap_Tree &tree, int parent_index, vector<GOverlap> 
     children_overlaps[ip].children_count = -1;
     // add to tree
     // note that the 'root' pointer may be invalidated by the push back below
-    tree.overlaps.push_back(children_overlaps[ip]);
+    overlaps.push_back(children_overlaps[ip]);
   }
 
   _nov_ += noverlaps;
@@ -205,7 +194,7 @@ static int add_children(GOverlap_Tree &tree, int parent_index, vector<GOverlap> 
 
 /* scans the siblings of overlap identified by "root_index" to create children overlaps,
    returns them into the "children_overlaps" buffer: (root) + (atom) -> (root, atom) */
-static int compute_children(GOverlap_Tree &tree, int root_index, vector<GOverlap> &children_overlaps){
+int GOverlap_Tree::compute_children(int root_index, vector<GOverlap> &children_overlaps){
   int parent_index;
   int sibling_start, sibling_count;
   int j;
@@ -214,13 +203,13 @@ static int compute_children(GOverlap_Tree &tree, int root_index, vector<GOverlap
   children_overlaps.clear();
 
   /* retrieves overlap */
-  GOverlap &root = tree.overlaps[root_index];
+  GOverlap &root = overlaps[root_index];
   
   /* retrieves parent overlap */
   parent_index = root.parent_index;
   if(parent_index < 0) return 1;//master root? can't do compute_children() on master root
   if(root.level >= MAX_ORDER) return 1;
-  GOverlap &parent = tree.overlaps[parent_index];
+  GOverlap &parent = overlaps[parent_index];
 
   /* retrieves start index and count of siblings */
   sibling_start = parent.children_startindex;
@@ -231,13 +220,13 @@ static int compute_children(GOverlap_Tree &tree, int root_index, vector<GOverlap
   /* now loops over "younger" siblings (i<j loop) to compute new overlaps */
   for(int slotj=root_index+1; slotj<sibling_start + sibling_count; slotj++){
     GaussianVca g12;
-    GOverlap &sibling = tree.overlaps[slotj];
+    GOverlap &sibling = overlaps[slotj];
     RealOpenMM gvol, dVdr,dVdV, sfp;
 
     /* atomic gaussian of last atom of sibling */
     int atom2 = sibling.atom;
     GaussianVca &g1 = root.g;
-    GaussianVca &g2 = tree.overlaps[atom2+1].g; //atoms are stored in the tree at indexes 1...N
+    GaussianVca &g2 = overlaps[atom2+1].g; //atoms are stored in the tree at indexes 1...N
     gvol = ogauss_alpha(g1, g2, g12, dVdr, dVdV, sfp);
 
     /* create child if overlap volume is not zero */
@@ -252,7 +241,7 @@ static int compute_children(GOverlap_Tree &tree, int root_index, vector<GOverlap
       //dvv1 is the derivative of V(123...)n with respect to V(123...)
       ov.dvv1 = dVdV;
       ov.sfp = sfp;
-      ov.gamma1i = root.gamma1i + tree.overlaps[atom2+1].gamma1i;
+      ov.gamma1i = root.gamma1i + overlaps[atom2+1].gamma1i;
       children_overlaps.push_back(ov);
     }
   }
@@ -262,12 +251,12 @@ static int compute_children(GOverlap_Tree &tree, int root_index, vector<GOverlap
 
 
 /*rescan the sub-tree to recompute the volumes, does not modify the tree */
-static int rescan_r(GOverlap_Tree &tree, int slot){
+int GOverlap_Tree::rescan_r(int slot){
   int parent_index;
   int sibling_start, sibling_count;
 
   /* this overlap  */
-  GOverlap &ov = tree.overlaps[slot];
+  GOverlap &ov = overlaps[slot];
 
   /* recompute its own overlap by merging parent and last atom */
   parent_index = ov.parent_index;
@@ -275,9 +264,9 @@ static int rescan_r(GOverlap_Tree &tree, int slot){
     GaussianVca g12;
     RealOpenMM dVdr,dVdV, dVdalpha, d2Vdalphadr, d2VdVdr, sfp;
     int atom = ov.atom;
-    GOverlap &parent  = tree.overlaps[parent_index];
+    GOverlap &parent  = overlaps[parent_index];
     GaussianVca &g1 = parent.g;
-    GaussianVca &g2 = tree.overlaps[atom+1].g; //atoms are stored in the tree at indexes 1...N
+    GaussianVca &g2 = overlaps[atom+1].g; //atoms are stored in the tree at indexes 1...N
     RealOpenMM gvol = ogauss_alpha(g1,g2, g12,dVdr,dVdV,sfp);
     ov.g = g12;
     ov.volume = gvol;
@@ -286,29 +275,28 @@ static int rescan_r(GOverlap_Tree &tree, int slot){
     //dvv1 is the derivative of V(123...)n with respect to V(123...)
     ov.dvv1 = dVdV;
     ov.sfp = sfp;
-    ov.gamma1i = parent.gamma1i + tree.overlaps[atom+1].gamma1i;
+    ov.gamma1i = parent.gamma1i + overlaps[atom+1].gamma1i;
   }
   
   /* calls itself recursively on the children */
   for(int slot_child=ov.children_startindex ; slot_child < ov.children_startindex+ov.children_count ; slot_child++){
-    rescan_r(tree, slot_child);
+    rescan_r(slot_child);
   }
 
   return 1;
 }
 
 /*rescan the tree to recompute the volumes, does not modify the tree */
-static int rescan_tree_v(GOverlap_Tree &tree, 
-			 int natoms, vector<RealVec> &pos,
-			 vector<RealOpenMM> &radius,
-			 vector<RealOpenMM> &volume,
-			 vector<RealOpenMM> &gamma,
-			 vector<int> &ishydrogen){
+int GOverlap_Tree::rescan_tree_v(vector<RealVec> &pos,
+				 vector<RealOpenMM> &radius,
+				 vector<RealOpenMM> &volume,
+				 vector<RealOpenMM> &gamma,
+				 vector<int> &ishydrogen){
 
   int slot;
   
   slot = 0;
-  GOverlap *ov = &(tree.overlaps[slot]);
+  GOverlap *ov = &(overlaps[slot]);
   ov->level = 0;
   ov->volume = 0;
   ov->dv1 = RealVec(0,0,0);
@@ -320,12 +308,13 @@ static int rescan_tree_v(GOverlap_Tree &tree,
   slot = 1;
   for(int iat=0;iat<natoms;iat++, slot++){
     RealOpenMM a = KFC/(radius[iat]*radius[iat]);
-    ov = &(tree.overlaps[slot]);
+    RealOpenMM vol = ishydrogen[iat] > 0 ? 0. : volume[iat];
+    ov = &(overlaps[slot]);
     ov->level = 1;
-    ov->g.v = volume[iat];
+    ov->g.v = vol;
     ov->g.a = a;
     ov->g.c = pos[iat];
-    ov->volume = volume[iat];
+    ov->volume = vol;
     ov->dv1 = RealVec(0,0,0);
     ov->dvv1 = 1.; //dVi/dVi
     ov->self_volume = 0.;
@@ -333,29 +322,29 @@ static int rescan_tree_v(GOverlap_Tree &tree,
     ov->gamma1i = gamma[iat]; // gamma[iat]/SA_DR;
    }
 
-  rescan_r(tree,0);
+  rescan_r(0);
   return 1;
 }
 
 /*rescan the sub-tree to recompute the gammas, does not modify the volumes nor the tree */
-static int rescan_gamma_r(GOverlap_Tree &tree, int slot){
+int GOverlap_Tree::rescan_gamma_r(int slot){
   int parent_index;
   int sibling_start, sibling_count;
 
   /* this overlap  */
-  GOverlap &ov = tree.overlaps[slot];
+  GOverlap &ov = overlaps[slot];
 
   /* recompute its own overlap by merging parent and last atom */
   parent_index = ov.parent_index;
   if(parent_index > 0){
     int atom = ov.atom;
-    GOverlap &parent  = tree.overlaps[parent_index];
-    ov.gamma1i = parent.gamma1i + tree.overlaps[atom+1].gamma1i;
+    GOverlap &parent  = overlaps[parent_index];
+    ov.gamma1i = parent.gamma1i + overlaps[atom+1].gamma1i;
   }
   
   /* calls itself recursively on the children */
   for(int slot_child=ov.children_startindex ; slot_child < ov.children_startindex+ov.children_count ; slot_child++){
-    rescan_gamma_r(tree, slot_child);
+    rescan_gamma_r(slot_child);
   }
 
   return 1;
@@ -364,55 +353,53 @@ static int rescan_gamma_r(GOverlap_Tree &tree, int slot){
 
 
 /*rescan the tree to recompute the gammas only, does not modify volumes and the tree */
-static int rescan_tree_g(GOverlap_Tree &tree, 
-			      int natoms, vector<RealOpenMM> &gamma){
+int GOverlap_Tree::rescan_tree_g(vector<RealOpenMM> &gamma){
 
   int slot;
   
   slot = 0;
-  GOverlap *ov = &(tree.overlaps[slot]);
+  GOverlap *ov = &(overlaps[slot]);
   ov->gamma1i = 0.;
 
   slot = 1;
   for(int iat=0;iat<natoms;iat++, slot++){
-    ov = &(tree.overlaps[slot]);
+    ov = &(overlaps[slot]);
     ov->gamma1i = gamma[iat];
    }
 
-  rescan_gamma_r(tree,0);
+  rescan_gamma_r(0);
   return 1;
 }
 
 
 
-static int compute_andadd_children_r(GOverlap_Tree &tree, int root){
+int GOverlap_Tree::compute_andadd_children_r(int root){
   vector<GOverlap> children_overlaps;
-  compute_children(tree, root, children_overlaps);
+  compute_children(root, children_overlaps);
   int noverlaps = children_overlaps.size();
   if(noverlaps>0){
-    int start_slot = add_children(tree, root, children_overlaps);
+    int start_slot = add_children(root, children_overlaps);
     for (int ichild=start_slot; ichild < start_slot + noverlaps ; ichild++){
-      compute_andadd_children_r(tree, ichild);
+      compute_andadd_children_r(ichild);
     }
   }
   return 1;
 }
 
-static int compute_overlap_tree_r(GOverlap_Tree &tree,
-				  int natoms, vector<RealVec> &pos, vector<RealOpenMM> &radius,
-				  vector<RealOpenMM> &volume,
-				  vector<RealOpenMM> &gamma, vector<int> &ishydrogen){
-  init_overlap_tree(tree, natoms, pos, radius, volume, gamma, ishydrogen);
+int GOverlap_Tree::compute_overlap_tree_r(vector<RealVec> &pos, vector<RealOpenMM> &radius,
+					  vector<RealOpenMM> &volume,
+					  vector<RealOpenMM> &gamma, vector<int> &ishydrogen){
+  init_overlap_tree(pos, radius, volume, gamma, ishydrogen);
   for(int slot = 1; slot <= natoms ; slot++){
-    compute_andadd_children_r(tree, slot);
+    compute_andadd_children_r(slot);
   }
   return 1;
 }
 
 /* compute volumes, energy of this volume and calls itself to get the volumes of the children */
-static int compute_volume_underslot2_r
+int GOverlap_Tree::compute_volume_underslot2_r
 (
- GOverlap_Tree &tree, int slot,
+ int slot,
  RealOpenMM &psi1i, RealOpenMM &f1i, RealVec &p1i, //subtree accumulators for free volume
  RealOpenMM &psip1i, RealOpenMM &fp1i, RealVec &pp1i, //subtree accumulators for self volume
  RealOpenMM &energy1i, RealOpenMM &fenergy1i, RealVec &penergy1i, //subtree accumulators for volume-based energy
@@ -421,13 +408,13 @@ static int compute_volume_underslot2_r
  vector<RealOpenMM> &self_volume  //atomic self volumes
 ){
 
-  GOverlap &ov = tree.overlaps[slot];
+  GOverlap &ov = overlaps[slot];
   RealOpenMM cf = ov.level % 2 == 0 ? -1.0 : 1.0;
   RealOpenMM volcoeff  = ov.level > 0 ? cf : 0;
   RealOpenMM volcoeffp = ov.level > 0 ? volcoeff/(RealOpenMM)ov.level : 0;
 
   int atom = ov.atom;
-  RealOpenMM ai = tree.overlaps[atom+1].g.a;
+  RealOpenMM ai = overlaps[atom+1].g.a;
   RealOpenMM a1i = ov.g.a;
   RealOpenMM a1 = a1i - ai;
  
@@ -453,7 +440,7 @@ static int compute_volume_underslot2_r
       RealOpenMM psi1it, f1it; RealVec p1it;
       RealOpenMM psip1it, fp1it; RealVec pp1it;
       RealOpenMM energy1it, fenergy1it; RealVec penergy1it;
-      compute_volume_underslot2_r(tree, sloti,
+      compute_volume_underslot2_r(sloti,
 				  psi1it, f1it, p1it, 
 				  psip1it, fp1it, pp1it,
 				  energy1it, fenergy1it, penergy1it,
@@ -497,10 +484,10 @@ static int compute_volume_underslot2_r
 }
 
 /* traverses tree and computes volumes, etc. */
-static int compute_volume2_r(GOverlap_Tree &tree, 
-			     int natoms, vector<RealVec> &pos,
-			     RealOpenMM &volume, RealOpenMM &energy, 
-			     vector<RealVec> &dv, vector<RealOpenMM> &free_volume, vector<RealOpenMM> &self_volume){ 
+int GOverlap_Tree::compute_volume2_r(vector<RealVec> &pos,
+				     RealOpenMM &volume, RealOpenMM &energy, 
+				     vector<RealVec> &dv, vector<RealOpenMM> &free_volume,
+				     vector<RealOpenMM> &self_volume){ 
   
   int slot = 0;
   int i,j;
@@ -514,7 +501,7 @@ static int compute_volume2_r(GOverlap_Tree &tree,
   for(int i = 0 ; i < free_volume.size(); ++i) free_volume[i] = 0;
   for(int i = 0 ; i < self_volume.size(); ++i) self_volume[i] = 0;
 
-  compute_volume_underslot2_r(tree, 0,
+  compute_volume_underslot2_r(0,
 			      psi1i, f1i, p1i, 
 			      psip1i, fp1i, pp1i,
 			      energy1i, fenergy1i, penergy1i,
@@ -525,18 +512,7 @@ static int compute_volume2_r(GOverlap_Tree &tree,
   return 1;
 }
 
-
-/* same as compute_andadd_children_r() but does not call itself on the children */
-static int compute_andadd_children_seq(GOverlap_Tree &tree, int root){
-  vector<GOverlap> children_overlaps;
-  compute_children(tree, root, children_overlaps);
-  int noverlaps = children_overlaps.size();
-  if(noverlaps>0){
-    int start_slot = add_children(tree, root, children_overlaps);
-  }
-  return 1;
-}
-
+#ifdef NOTNOW
 /* print overlaps up to 2-body */
 static void print_flat_tree_2body(GOverlap_Tree &tree){
   int end = 0;
@@ -550,12 +526,9 @@ static void print_flat_tree_2body(GOverlap_Tree &tree){
     cout << slot << " " << ov->volume << " " << ov->children_startindex << " " << ov->children_count << endl;
   }
 }
+#endif
 
-/*
- * End of sequential functions
- */
-
-
+#ifdef NOTNOW
 static void test_gaussian(GOverlap_Tree &tree){
   /* test ogauss derivatives */
   GaussianVca g1, g2, g12;
@@ -580,42 +553,30 @@ static void test_gaussian(GOverlap_Tree &tree){
     gvol_old = gvol;
   }
 }
-
+#endif
 
 void GOverlap::print_overlap(void){
   cout << std::setprecision(4) << std::setw(7) << level << " " << std::setw(7)  << atom << " " << std::setw(7)  << parent_index << " " <<  std::setw(7) << children_startindex << " " << std::setw(7) << children_count << " " << std::setw(10) << self_volume << " " << std::setw(10) << volume << " " << std::setw(10) << gamma1i << " " << std::setw(10) << g.a << " " << std::setw(10) << g.c[0] << " " <<  std::setw(10) << g.c[1] << " " <<  std::setw(10) << g.c[2] << " " <<  std::setw(10) << dv1[0] << " " << std::setw(10) << dv1[1] << " " << std::setw(10) << dv1[2] << " " << std::setw(10) << sfp << endl;
 }
 
-static void print_tree_r(vector<GOverlap> &overlaps, int slot){
+void GOverlap_Tree::print_tree_r(int slot){
   GOverlap &ov = overlaps[slot];
   std::cout << "tg: " << std::setw(6) << slot << " ";
   ov.print_overlap();
   for(int i=ov.children_startindex ; i < ov.children_startindex+ ov.children_count; i++){
-    print_tree_r(overlaps, i);
+    print_tree_r(i);
   }
 }
 
 void GOverlap_Tree::print_tree(void){
   std::cout << "slot level LastAtom parent ChStart ChCount SelfV V gamma a x y z dedx dedy dedz sfp" << std::endl;
   for(int i=1;i<= natoms ; i++){
-    print_tree_r(overlaps, i);
+    print_tree_r(i);
   }
 }
 
-// version of constructor with atomic volumes
-GaussVol::GaussVol(const int natoms, vector<int>& ishydrogen_in){   
-   tree.natoms = natoms;
-   ishydrogen = ishydrogen_in;
-   grad.resize(natoms);
-   self_volume.resize(natoms);
-   free_volume.resize(natoms);   
-}
-
-
-void GaussVol::compute_tree(vector<RealVec> &positions,
-			    vector<RealOpenMM> &radii, vector<RealOpenMM> &volumes, 
-			    vector<RealOpenMM> &gammas){
-  compute_overlap_tree_r(tree, tree.natoms, positions, radii, volumes, gammas, ishydrogen);
+void GaussVol::compute_tree(vector<RealVec> &positions){
+  tree->compute_overlap_tree_r(positions, radii, volumes, gammas, ishydrogen);
 }
 
 
@@ -624,36 +585,32 @@ void GaussVol::compute_volume(vector<RealVec> &positions,
 			      RealOpenMM &energy,
 			      vector<RealVec> &force,
 			      vector<RealOpenMM> &free_volume,  vector<RealOpenMM> &self_volume){
-  compute_volume2_r(tree, 
-		    tree.natoms, positions,
-		    volume, energy, 
-		    grad, 
-		    free_volume, self_volume); 
-  for(int i = 0; i < tree.natoms; ++i) force[i] = -grad[i];
+  tree->compute_volume2_r(positions,
+			  volume, energy, 
+			  grad, 
+			  free_volume, self_volume); 
+  for(int i = 0; i < natoms; ++i) force[i] = -grad[i];
 }
 
 //rescan to compute a subset of overlap volumes with radii smaller than ones used to
 //set up the tree with compute_tree()
-void GaussVol::rescan_tree_volumes(vector<RealVec> &positions,
-				   vector<RealOpenMM> &radii,
-				   vector<RealOpenMM> &volumes,
-				   vector<RealOpenMM> &gammas){
-  rescan_tree_v(tree, tree.natoms, positions, radii, volumes, gammas, ishydrogen);
+void GaussVol::rescan_tree_volumes(vector<RealVec> &positions){
+  tree->rescan_tree_v(positions, radii, volumes, gammas, ishydrogen);
 }
 
-//set new gammas on tree
-void GaussVol::rescan_tree_gammas(vector<RealOpenMM> &gammas){
-  rescan_tree_g(tree, tree.natoms, gammas);
+//deposit current gammas on the overlap tree
+void GaussVol::rescan_tree_gammas(void){
+  tree->rescan_tree_g(gammas);
 }
 
 
-int nchildren_under_slot_r(GOverlap_Tree &tree, int slot){
+int GOverlap_Tree::nchildren_under_slot_r(int slot){
   int n = 0;
-  if(tree.overlaps[slot].children_count > 0){
-    n += tree.overlaps[slot].children_count;
+  if(overlaps[slot].children_count > 0){
+    n += overlaps[slot].children_count;
     //now calls itself on the children
-    for(int i = 0; i < tree.overlaps[slot].children_count; i++){
-      n += nchildren_under_slot_r(tree, tree.overlaps[slot].children_startindex + i);
+    for(int i = 0; i < overlaps[slot].children_count; i++){
+      n += nchildren_under_slot_r(overlaps[slot].children_startindex + i);
     }
   }
   return n;
@@ -662,10 +619,10 @@ int nchildren_under_slot_r(GOverlap_Tree &tree, int slot){
 
 // returns number of overlaps for each atom 
 void GaussVol::getstat(vector<int>& nov){
-   nov.resize(tree.natoms);
-   for(int i=0; i<tree.natoms; i++) nov[i] = 0;
-   for(int atom = 0; atom < tree.natoms; atom++){
+   nov.resize(natoms);
+   for(int i=0; i<natoms; i++) nov[i] = 0;
+   for(int atom = 0; atom < natoms; atom++){
      int slot = atom + 1;
-     nov[atom] = nchildren_under_slot_r(tree, slot);
+     nov[atom] = tree->nchildren_under_slot_r(slot);
    }
 }

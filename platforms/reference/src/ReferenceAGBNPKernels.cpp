@@ -24,6 +24,7 @@ using namespace OpenMM;
 using namespace std;
 
 
+#ifdef NOTNOW
 // ---- Lifted from gaussvol.cpp, need to share somehow ----
 
 /* overlap volume switching function + 1st derivative */
@@ -104,7 +105,7 @@ static RealOpenMM ogauss_alpha(GaussianVca &g1, GaussianVca &g2, GaussianVca &g1
   return s*gvol;
 }
 // ---- end of "Lifted from gaussvol.cpp" --------------------
-
+#endif
 
 static vector<RealVec>& extractPositions(ContextImpl& context) {
     ReferencePlatform::PlatformData* data = reinterpret_cast<ReferencePlatform::PlatformData*>(context.getPlatformData());
@@ -187,8 +188,8 @@ void ReferenceCalcAGBNPForceKernel::initialize(const System& system, const AGBNP
     }
 
     //create and saves GaussVol instance
-    //loads some initial values for radii and gamma but they will be
-    //reset in execute()
+    //radii, volumes, etc. will be set in execute()
+    cout << "Hsize: " << ishydrogen.size() << endl;
     gvol = new GaussVol(numParticles, ishydrogen);
 
     //initializes I4 lookup table for Born-radii calculation
@@ -243,16 +244,23 @@ double ReferenceCalcAGBNPForceKernel::executeGVolSA(ContextImpl& context, bool i
     } 
 
     
-    // volume energy function 1
+    // volume energy function 1 (large radii)
     RealOpenMM volume1, vol_energy1;
+
+    gvol->setRadii(radii_large);
+
+    vector<RealOpenMM> volumes_large(numParticles);
+    for(int i = 0; i < numParticles; i++){
+      volumes_large[i] = ishydrogen[i]>0 ? 0.0 : 4.*M_PI*pow(radii_large[i],3)/3.;
+    }
+    gvol->setVolumes(volumes_large);
+    
     for(int i = 0; i < numParticles; i++){
       nu[i] = gammas[i]/SA_DR;
     }
-    vector<RealOpenMM> volumes_large(numParticles);
-    for(int i = 0; i < numParticles; i++){
-      volumes_large[i] = 4.*M_PI*pow(radii_large[i],3)/3.;
-    }
-    gvol->compute_tree(pos, radii_large, volumes_large, nu);
+    gvol->setGammas(nu);
+    
+    gvol->compute_tree(pos);
     gvol->compute_volume(pos, volume1, vol_energy1, vol_force, free_volume, self_volume);
       
     //returns energy and gradients from volume energy function
@@ -266,15 +274,23 @@ double ReferenceCalcAGBNPForceKernel::executeGVolSA(ContextImpl& context, bool i
 
     // volume energy function 2 (small radii)
     RealOpenMM vol_energy2, volume2;
+
+    gvol->setRadii(radii_vdw);
+
+    vector<RealOpenMM> volumes_vdw(numParticles);
+    for(int i = 0; i < numParticles; i++){
+      volumes_vdw[i] = ishydrogen[i]>0 ? 0.0 : 4.*M_PI*pow(radii_vdw[i],3)/3.;
+    }
+    gvol->setVolumes(volumes_vdw);
+    
     for(int i = 0; i < numParticles; i++){
       nu[i] = -gammas[i]/SA_DR;
     }
-    vector<RealOpenMM> volumes_vdw(numParticles);
-    for(int i = 0; i < numParticles; i++){
-      volumes_vdw[i] = 4.*M_PI*pow(radii_vdw[i],3)/3.;
-    }
-    gvol->rescan_tree_volumes(pos, radii_vdw, volumes_vdw, nu);
+    gvol->setGammas(nu);
+
+    gvol->rescan_tree_volumes(pos);
     gvol->compute_volume(pos, volume2, vol_energy2, vol_force, free_volume, self_volume);
+    
     for(int i = 0; i < numParticles; i++){
       force[i] += vol_force[i] * w_evol;
     }
@@ -305,21 +321,24 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool i
       cout << "-----------------------------------------------" << endl;
     } 
     
-
-
-
-    
-    // volume energy function 1
-    vector<RealOpenMM> nu(numParticles);
+    // volume energy function 1 (large radii)
     RealOpenMM volume1, vol_energy1;
+
+    gvol->setRadii(radii_large);
+    
+    vector<RealOpenMM> nu(numParticles);
     for(int i = 0; i < numParticles; i++){
       nu[i] = gammas[i]/SA_DR;
     }
+    gvol->setGammas(nu);
+    
     vector<RealOpenMM> volumes_large(numParticles);
     for(int i = 0; i < numParticles; i++){
       volumes_large[i] = ishydrogen[i]>0 ? 0.0 : 4.*M_PI*pow(radii_large[i],3)/3.;
     }
-    gvol->compute_tree(pos, radii_large, volumes_large, nu);
+    gvol->setVolumes(volumes_large);
+    
+    gvol->compute_tree(pos);
     if(verbose_level > 4){
       gvol->print_tree();
     }
@@ -368,15 +387,23 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool i
     
     // volume energy function 2 (small radii)
     RealOpenMM vol_energy2, volume2;
+
+    gvol->setRadii(radii_vdw);
+    
     for(int i = 0; i < numParticles; i++){
       nu[i] = -gammas[i]/SA_DR;
     }
+    gvol->setGammas(nu);
+    
     vector<RealOpenMM> volumes_vdw(numParticles);
     for(int i = 0; i < numParticles; i++){
       volumes_vdw[i] = ishydrogen[i]>0 ? 0.0 : 4.*M_PI*pow(radii_vdw[i],3)/3.;
     }
-    gvol->rescan_tree_volumes(pos, radii_vdw, volumes_vdw, nu);
+    gvol->setVolumes(volumes_vdw);
+
+    gvol->rescan_tree_volumes(pos);
     gvol->compute_volume(pos, volume2, vol_energy2, vol_force, free_volume, self_volume);
+    
     for(int i = 0; i < numParticles; i++){
       force[i] += vol_force[i] * w_evol;
     }
@@ -709,7 +736,8 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool i
       RealOpenMM vol = 4.*M_PI*pow(radii_vdw[i],3)/3.0; 
       nu[i] = evdw_der_W[i]/vol;
     }
-    gvol->rescan_tree_gammas(nu);
+    gvol->setGammas(nu);
+    gvol->rescan_tree_gammas();
     gvol->compute_volume(pos, volume_tmp, vol_energy_tmp, vol_force, free_volume, self_volume);
     for(int i = 0; i < numParticles; i++){
       force[i] += vol_force[i] * w_vdw;
@@ -722,7 +750,8 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool i
       RealOpenMM vol = 4.*M_PI*pow(radii_vdw[i],3)/3.0; 
       nu[i] = egb_der_U[i]/vol;
     }
-    gvol->rescan_tree_gammas(nu);
+    gvol->setGammas(nu);
+    gvol->rescan_tree_gammas();
     gvol->compute_volume(pos, volume_tmp, vol_energy_tmp, vol_force, free_volume, self_volume);
     for(int i = 0; i < numParticles; i++){
       force[i] += vol_force[i] * w_egb;
@@ -781,13 +810,19 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
   //
   // self volumes with vdw radii
   //
+  gvol->setRadii(radii_vdw);
+  
   vector<RealOpenMM> nu(numParticles);
   for(int i = 0; i < numParticles; i++) nu[i] = 1.0;  //dummy gammas
+  gvol->setGammas(nu);
+
   vector<RealOpenMM> volumes_vdw(numParticles);
   for(int i = 0; i < numParticles; i++){
     volumes_vdw[i] = ishydrogen[i]>0 ? 0.0 : 4.*M_PI*pow(radii_vdw[i],3)/3.;
   }
-  gvol->compute_tree(pos, radii_vdw, volumes_vdw, nu);
+  gvol->setVolumes(nu);
+  
+  gvol->compute_tree(pos);
   if(verbose_level > 5){
     gvol->print_tree();
   }
@@ -900,7 +935,10 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
     vector<RealVec> pos_ms(num_ms);
     for(int i=0;i<num_ms;i++) pos_ms[i] = msparticles2[i].pos;
     GaussVol *gvolms = new GaussVol(msparticles2.size(), ishydrogen_ms);
-    gvolms->compute_tree(pos_ms, radii_ms, volumes_ms, gammas_ms);
+    gvolms->setRadii(radii_ms);
+    gvolms->setVolumes(volumes_ms);
+    gvolms->setGammas(gammas_ms);
+    gvolms->compute_tree(pos_ms);
     vector<RealVec> forces_ms(num_ms);
     vector<RealOpenMM> freevols_ms(num_ms), selfvols_ms(num_ms);
     RealOpenMM vol_ms, energy_ms;
