@@ -168,7 +168,8 @@ class GOverlap_Tree {
      RealOpenMM &psi1i, RealOpenMM &f1i, RealVec &p1i, //subtree accumulators for free volume
      RealOpenMM &psip1i, RealOpenMM &fp1i, RealVec &pp1i, //subtree accumulators for self volume
      RealOpenMM &energy1i, RealOpenMM &fenergy1i, RealVec &penergy1i, //subtree accumulators for volume-based energy
-     vector<RealVec>  &dv,          //gradients of volume-based energy				
+     vector<RealVec>  &dr,          //gradients of volume-based energy wrt to atomic positions
+     vector<RealOpenMM>  &dv,          //gradients of volume-based energy wrt to atomic volumes				
      vector<RealOpenMM> &free_volume, //atomic free volumes
      vector<RealOpenMM> &self_volume  //atomic self volumes
 				  );
@@ -176,7 +177,9 @@ class GOverlap_Tree {
   /* recursively traverses tree and computes volumes, etc. */
   int compute_volume2_r(vector<RealVec> &pos,
 			RealOpenMM &volume, RealOpenMM &energy, 
-			vector<RealVec> &dv, vector<RealOpenMM> &free_volume,
+			vector<RealVec> &dr,
+			vector<RealOpenMM> &dv,
+			vector<RealOpenMM> &free_volume,
 			vector<RealOpenMM> &self_volume);
 
   /*rescan the sub-tree to recompute the volumes, does not modify the tree */
@@ -225,9 +228,6 @@ class GaussVol {
     this->gammas.resize(natoms);
     for(int i=0;i<natoms;i++) gammas[i] = 0.;
     this->ishydrogen = ishydrogen;
-    grad.resize(natoms);
-    self_volume.resize(natoms);
-    free_volume.resize(natoms);
   }
   GaussVol(const int natoms,
 	   vector<RealOpenMM> &radii,
@@ -240,9 +240,6 @@ class GaussVol {
     this->volumes = volumes;
     this->gammas = gammas;
     this->ishydrogen = ishydrogen;
-    grad.resize(natoms);
-    self_volume.resize(natoms);
-    free_volume.resize(natoms);
   }
 
   
@@ -279,12 +276,14 @@ class GaussVol {
   //constructs the tree
   void compute_tree(vector<RealVec> &positions);
 
-  /* returns GaussVol volume area energy function and forces */
-  /* also returns atomic free-volumes and self-volumes */
+  /* returns GaussVol volume energy function and forces */
+  /* also returns gradients with respect to atomic volumes and 
+     atomic free-volumes and self-volumes */
   void compute_volume(vector<RealVec> &positions,
 		      RealOpenMM &volume,
 		      RealOpenMM &energy,
 		      vector<RealVec> &force,
+		      vector<RealOpenMM> &gradV,
 		      vector<RealOpenMM> &free_volume,  vector<RealOpenMM> &self_volume);
 
   //rescan the tree after resetting gammas, radii and volumes
@@ -310,10 +309,6 @@ class GaussVol {
   vector<RealOpenMM> volumes;
   vector<RealOpenMM> gammas;
   vector<int> ishydrogen;
-  
-  vector<RealVec> grad;
-  vector<RealOpenMM> self_volume;
-  vector<RealOpenMM> free_volume;
 };
 
 #endif //GAUSSVOL_H

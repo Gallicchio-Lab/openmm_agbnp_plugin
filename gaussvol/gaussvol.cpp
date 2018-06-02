@@ -403,7 +403,8 @@ int GOverlap_Tree::compute_volume_underslot2_r
  RealOpenMM &psi1i, RealOpenMM &f1i, RealVec &p1i, //subtree accumulators for free volume
  RealOpenMM &psip1i, RealOpenMM &fp1i, RealVec &pp1i, //subtree accumulators for self volume
  RealOpenMM &energy1i, RealOpenMM &fenergy1i, RealVec &penergy1i, //subtree accumulators for volume-based energy
- vector<RealVec>  &dv,          //gradients of volume-based energy				
+ vector<RealVec> &dr,          //gradients of volume-based energy wrt to atom positions
+ vector<RealOpenMM> &dv,          //gradients of volume-based energy wrt to atomic volumes
  vector<RealOpenMM> &free_volume, //atomic free volumes
  vector<RealOpenMM> &self_volume  //atomic self volumes
 ){
@@ -444,7 +445,7 @@ int GOverlap_Tree::compute_volume_underslot2_r
 				  psi1it, f1it, p1it, 
 				  psip1it, fp1it, pp1it,
 				  energy1it, fenergy1it, penergy1it,
-				  dv, free_volume, self_volume);
+				  dr, dv, free_volume, self_volume);
 
       psi1i += psi1it;
       f1i += f1it;
@@ -468,8 +469,9 @@ int GOverlap_Tree::compute_volume_underslot2_r
 
     //contributions to energy gradients
     c2 = ai/a1i;
-    dv[atom] += (-ov.dv1) * fenergy1i + penergy1i * c2;
-
+    dr[atom] += (-ov.dv1) * fenergy1i + penergy1i * c2;
+    dv[atom] += ov.volume * fenergy1i; //will be divided by Vatom later 
+    
     //update subtree P1..i's for parent
     c2 = a1/a1i;
     p1i = (ov.dv1) * f1i + p1i * c2;
@@ -486,7 +488,9 @@ int GOverlap_Tree::compute_volume_underslot2_r
 /* traverses tree and computes volumes, etc. */
 int GOverlap_Tree::compute_volume2_r(vector<RealVec> &pos,
 				     RealOpenMM &volume, RealOpenMM &energy, 
-				     vector<RealVec> &dv, vector<RealOpenMM> &free_volume,
+				     vector<RealVec> &dr,
+				     vector<RealOpenMM> &dv,
+				     vector<RealOpenMM> &free_volume,
 				     vector<RealOpenMM> &self_volume){ 
   
   int slot = 0;
@@ -497,7 +501,8 @@ int GOverlap_Tree::compute_volume2_r(vector<RealVec> &pos,
 
   // reset volumes, gradients
   RealVec zero3 = RealVec(0,0,0);
-  for(int i = 0 ; i < dv.size(); ++i) dv[i] = zero3;
+  for(int i = 0 ; i < dr.size(); ++i) dr[i] = zero3;
+  for(int i = 0 ; i < dv.size(); ++i) dv[i] = 0.;
   for(int i = 0 ; i < free_volume.size(); ++i) free_volume[i] = 0;
   for(int i = 0 ; i < self_volume.size(); ++i) self_volume[i] = 0;
 
@@ -505,7 +510,7 @@ int GOverlap_Tree::compute_volume2_r(vector<RealVec> &pos,
 			      psi1i, f1i, p1i, 
 			      psip1i, fp1i, pp1i,
 			      energy1i, fenergy1i, penergy1i,
-			      dv, free_volume, self_volume);
+			      dr, dv, free_volume, self_volume);
   
   volume = psi1i;
   energy = energy1i;
@@ -584,12 +589,17 @@ void GaussVol::compute_volume(vector<RealVec> &positions,
 			      RealOpenMM &volume,
 			      RealOpenMM &energy,
 			      vector<RealVec> &force,
+			      vector<RealOpenMM> &gradV,
 			      vector<RealOpenMM> &free_volume,  vector<RealOpenMM> &self_volume){
   tree->compute_volume2_r(positions,
 			  volume, energy, 
-			  grad, 
+			  force,
+			  gradV,
 			  free_volume, self_volume); 
-  for(int i = 0; i < natoms; ++i) force[i] = -grad[i];
+  for(int i = 0; i < natoms; ++i) force[i] = -force[i];//transform gradient to force
+  for(int i = 0; i < natoms; ++i) {
+    if(volumes[i] > 0) gradV[i] = gradV[i]/volumes[i];
+  }
 }
 
 //rescan to compute a subset of overlap volumes with radii smaller than ones used to

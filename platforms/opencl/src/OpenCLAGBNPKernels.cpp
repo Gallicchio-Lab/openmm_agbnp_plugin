@@ -390,6 +390,7 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       RealOpenMM volume, vol_energy;
       std::vector<RealOpenMM> free_volume, self_volume;
       std::vector<RealVec> vol_force;
+      std::vector<RealOpenMM> vol_dv;
       int numParticles = cl.getNumAtoms();
       //input lists
       positions.resize(numParticles);
@@ -400,6 +401,8 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       free_volume.resize(numParticles);
       self_volume.resize(numParticles);
       vol_force.resize(numParticles);
+      vol_dv.resize(numParticles);
+      
       double energy_density_param = 4.184*1000.0/27; //about 1 kcal/mol for each water volume
       for (int i = 0; i < numParticles; i++){
 	double r, g, alpha, q;
@@ -424,7 +427,7 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       gvol->setVolumes(volumes);
       gvol->setGammas(gammas);
       gvol->compute_tree(positions);
-      gvol->compute_volume(positions, volume, vol_energy, vol_force, free_volume, self_volume);
+      gvol->compute_volume(positions, volume, vol_energy, vol_force, vol_dv, free_volume, self_volume);
       vector<int> noverlaps(cl.getPaddedNumAtoms());
       for(int i = 0; i<cl.getPaddedNumAtoms(); i++) noverlaps[i] = 0;
       gvol->getstat(noverlaps);
