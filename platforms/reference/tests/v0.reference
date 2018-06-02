@@ -1,0 +1,15 @@
+Hsize: 264
+Executing GVolSA
+-----------------------------------------------
+Volume energy 1: 2287.78
+Volume energy 2: -1415.27
+Surface area energy: 872.514
+Energy: 872.514
+Executing GVolSA
+-----------------------------------------------
+Volume energy 1: 2287.88
+Volume energy 2: -1415.31
+Surface area energy: 872.576
+Energy: 872.576
+Energy Change: 0.0615433
+Energy Change from Gradient: 0.0619746
