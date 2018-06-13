@@ -102,11 +102,17 @@ private:
  class MSParticle {
  public:
    double vol;
+   double vol0;
+   double ssp;
    double freevol;
    double selfvol;
    RealVec pos;
    int parent1;
    int parent2;
+   RealVec gder;//used for volume derivatives
+   RealVec hder;//used for positional derivatives
+   double fms;
+   double G0; //accumulator for derivatives
  };
 
  

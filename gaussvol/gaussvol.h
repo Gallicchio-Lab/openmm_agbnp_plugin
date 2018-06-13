@@ -63,8 +63,15 @@ using namespace OpenMM;
 #define VOLMINB (0.1f*ANG3)
 
 //volume cutoffs for MS spheres
-#define VOLMINMSA (0.5f*ANG3)
-#define VOLMINMSB (1.0f*ANG3)
+//#define VOLMINMSA (0.5f*ANG3)
+//#define VOLMINMSB (1.0f*ANG3)
+
+#define VOLMINMSA (0.25f*ANG3)
+#define VOLMINMSB (0.5f*ANG3)
+
+
+//#define VOLMINMSA (0.01f*ANG3)
+//#define VOLMINMSB (0.5f*ANG3)
 
 
 

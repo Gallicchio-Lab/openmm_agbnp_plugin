@@ -470,7 +470,8 @@ int GOverlap_Tree::compute_volume_underslot2_r
     //contributions to energy gradients
     c2 = ai/a1i;
     dr[atom] += (-ov.dv1) * fenergy1i + penergy1i * c2;
-    dv[atom] += ov.volume * fenergy1i; //will be divided by Vatom later 
+    //ov.g.v is the unswitched volume
+    dv[atom] += ov.g.v * fenergy1i; //will be divided by Vatom later 
     
     //update subtree P1..i's for parent
     c2 = a1/a1i;
