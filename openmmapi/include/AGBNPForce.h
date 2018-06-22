@@ -10,6 +10,25 @@
 #include <vector>
 #include "internal/windowsExportAGBNP.h"
 
+//use nm and kj
+#define ANG (0.1f)
+#define ANG3 (0.001f)
+
+//volume cutoffs for MS spheres
+//those for atomic overlaps are defined in gaussvol.h
+#define VOLMINMSA (0.25f*ANG3)
+#define VOLMINMSB (0.5f*ANG3)
+
+//radius offset for surf energy calc.
+#define AGBNP_RADIUS_INCREMENT (0.5f*ANG)
+#define AGBNP2_RADIUS_INCREMENT (0.1f*ANG)
+
+//radius of a water molecule for AGBNP2
+#define SOLVENT_RADIUS (1.0*ANG)
+
+//solvent radius for vdw energy
+#define AGBNP_HB_RADIUS (1.4*ANG)
+
 namespace AGBNPPlugin {
 
 /* This class implements the AGBNP implicit solvation model */

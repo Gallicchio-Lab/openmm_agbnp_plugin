@@ -232,6 +232,16 @@ void OpenCLCalcAGBNPForceKernel::initialize(const System& system, const AGBNPFor
     if(verbose_level > 0)
       cout << "OpenCLCalcAGBNPForceKernel::initialize(): AGBNP version " << version << endl;
 
+    //set radius offset
+    if(version == 0){
+      roffset = AGBNP_RADIUS_INCREMENT;
+    }else if(version == 1){
+      roffset = AGBNP_RADIUS_INCREMENT;
+    }else{
+      roffset = AGBNP2_RADIUS_INCREMENT;
+    }
+
+    
     //we do not support multiple contexts(?), is it the same as multiple devices?
     if (cl.getPlatformData().contexts.size() > 1)
       throw OpenMMException("AGBNPForce does not support using multiple contexts");
@@ -275,7 +285,7 @@ void OpenCLCalcAGBNPForceKernel::initialize(const System& system, const AGBNPFor
       double radius, gamma, alpha, charge;
       bool ishydrogen;
       force.getParticleParameters(i, radius, gamma, alpha, charge, ishydrogen);
-	radiusVector1[i] = (cl_float) radius+SA_DR;
+	radiusVector1[i] = (cl_float) radius+roffset;
 	radiusVector2[i] = (cl_float) radius;
 	vdwrad[i] = radius; //double version for lookup table below
 	
@@ -284,7 +294,7 @@ void OpenCLCalcAGBNPForceKernel::initialize(const System& system, const AGBNPFor
 
 	// for surface-area energy use gamma/radius_offset
 	// gamma = 1 for self volume calculation.
-	double g = ishydrogen ? 0 : gamma/SA_DR;
+	double g = ishydrogen ? 0 : gamma/roffset;
 	gammaVector1[i] = (cl_float)  g; 
 	gammaVector2[i] = (cl_float) -g;
 	alphaVector[i] =  (cl_float) alpha;
@@ -408,7 +418,7 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
 	double r, g, alpha, q;
 	bool h;
 	gvol_force->getParticleParameters(i, r, g, alpha, q, h);
-	radii[i] = r + SA_DR;
+	radii[i] = r + roffset;
 	gammas[i] = energy_density_param;
 	if(h) gammas[i] = 0.0;
 	ishydrogen[i] = h ? 1 : 0;
@@ -1575,7 +1585,6 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       map<string, string> defines;
       defines["NUM_ATOMS"] = cl.intToString(cl.getNumAtoms());
       defines["PADDED_NUM_ATOMS"] = cl.intToString(cl.getPaddedNumAtoms());
-      double roffset = (version == 2)? AGBNP_RADIUS_INCREMENT: 0.0;
       defines["AGBNP_RADIUS_INCREMENT"] = cl.doubleToString(roffset);
       defines["AGBNP_HB_RADIUS"] = cl.doubleToString(AGBNP_HB_RADIUS);
       defines["AGBNP_RADIUS_PRECISION"] = cl.intToString(AGBNP_RADIUS_PRECISION) + "u";
@@ -3556,7 +3565,7 @@ void OpenCLCalcAGBNPForceKernel::copyParametersToContext(ContextImpl& context, c
       if(ishydrogenVector[i] != h ){
 	throw OpenMMException("updateParametersInContext: AGBNP plugin does not support changing heavy/hydrogen atoms.");
       }
-      double g = ishydrogen ? 0 : gamma/SA_DR;
+      double g = ishydrogen ? 0 : gamma/roffset;
       gammaVector1[i] = (cl_float)  g; 
       gammaVector2[i] = (cl_float) -g;
       alphaVector[i] =  (cl_float) alpha;

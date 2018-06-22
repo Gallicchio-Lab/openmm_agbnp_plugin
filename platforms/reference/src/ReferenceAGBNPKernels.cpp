@@ -62,6 +62,16 @@ void ReferenceCalcAGBNPForceKernel::initialize(const System& system, const AGBNP
 
     //set version
     version = force.getVersion();
+
+    //set radius offset
+    if(version == 0){
+      roffset = AGBNP_RADIUS_INCREMENT;
+    }else if(version == 1){
+      roffset = AGBNP_RADIUS_INCREMENT;
+    }else{
+      roffset = AGBNP2_RADIUS_INCREMENT;
+    }
+
     
     //input lists
     positions.resize(numParticles);
@@ -78,14 +88,14 @@ void ReferenceCalcAGBNPForceKernel::initialize(const System& system, const AGBNP
     surface_areas.resize(numParticles);
     vol_force.resize(numParticles);
     vol_dv.resize(numParticles);
-    
+
     vector<double> vdwrad(numParticles);
-    double common_gamma = -1;
+    common_gamma = -1;
     for (int i = 0; i < numParticles; i++){
       double r, g, alpha, q;
       bool h;
       force.getParticleParameters(i, r, g, alpha, q, h);
-      radii_large[i] = r + AGBNP_RADIUS_INCREMENT;
+      radii_large[i] = r + roffset;
       radii_vdw[i] = r;
       vdwrad[i] = r; //double version for lookup table setup
       gammas[i] = g;
@@ -173,7 +183,7 @@ double ReferenceCalcAGBNPForceKernel::executeGVolSA(ContextImpl& context, bool i
     gvol->setVolumes(volumes_large);
     
     for(int i = 0; i < numParticles; i++){
-      nu[i] = gammas[i]/SA_DR;
+      nu[i] = gammas[i]/roffset;
     }
     gvol->setGammas(nu);
     
@@ -218,7 +228,7 @@ double ReferenceCalcAGBNPForceKernel::executeGVolSA(ContextImpl& context, bool i
     gvol->setVolumes(volumes_vdw);
     
     for(int i = 0; i < numParticles; i++){
-      nu[i] = -gammas[i]/SA_DR;
+      nu[i] = -gammas[i]/roffset;
     }
     gvol->setGammas(nu);
 
@@ -282,7 +292,7 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool i
     
     vector<RealOpenMM> nu(numParticles);
     for(int i = 0; i < numParticles; i++){
-      nu[i] = gammas[i]/SA_DR;
+      nu[i] = gammas[i]/roffset;
     }
     gvol->setGammas(nu);
     
@@ -345,7 +355,7 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool i
     gvol->setRadii(radii_vdw);
     
     for(int i = 0; i < numParticles; i++){
-      nu[i] = -gammas[i]/SA_DR;
+      nu[i] = -gammas[i]/roffset;
     }
     gvol->setGammas(nu);
     
@@ -594,11 +604,11 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool i
     pos[probe_atom] += dx;
     //recompute Born radii w/o changing volume scaling factors
     for(int i = 0; i < numParticles; i++){
-      inverse_born_radius[i] = 1./(radii[i] - AGBNP_RADIUS_INCREMENT);
+      inverse_born_radius[i] = 1./(radii[i] - roffset);
       for(int j = 0; j < numParticles; j++){
 	if(i == j) continue;
 	if(ishydrogen[j]>0) continue;
-	RealOpenMM b = (radii[i] - AGBNP_RADIUS_INCREMENT)/radii[j];
+	RealOpenMM b = (radii[i] - roffset)/radii[j];
 	RealVec dist = pos[j] - pos[i];
 	RealOpenMM d = sqrt(dist.dot(dist));
 	if(d < AGBNP_I4LOOKUP_MAXA){
@@ -638,11 +648,11 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool i
     pos[probe_atom] += dx;
     //recompute Born radii w/o changing volume scaling factors
     for(int i = 0; i < numParticles; i++){
-      inverse_born_radius[i] = 1./(radii[i] - AGBNP_RADIUS_INCREMENT);
+      inverse_born_radius[i] = 1./(radii[i] - roffset);
       for(int j = 0; j < numParticles; j++){
 	if(i == j) continue;
 	if(ishydrogen[j]>0) continue;
-	RealOpenMM b = (radii[i] - AGBNP_RADIUS_INCREMENT)/radii[j];
+	RealOpenMM b = (radii[i] - roffset)/radii[j];
 	RealVec dist = pos[j] - pos[i];
 	RealOpenMM d = sqrt(dist.dot(dist));
 	if(d < AGBNP_I4LOOKUP_MAXA){
@@ -752,7 +762,7 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
   vector<RealVec>& pos = extractPositions(context);
   vector<RealVec>& force = extractForces(context);
   RealOpenMM energy = 0.0;
-  int verbose_level = 0;
+  int verbose_level = 1;
   bool verbose = verbose_level > 0;
   
   if(verbose_level > 0) {
@@ -761,35 +771,39 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
   } 
 
 
-  //
-  // self volumes with vdw radii
-  //
-  gvol->setRadii(radii_vdw);
+  // volume energy function 1 (large radii)
+  RealOpenMM volume1, vol_energy1;
+
+  gvol->setRadii(radii_large);
   
   vector<RealOpenMM> nu(numParticles);
-  double test_gamma = 20.0;
   for(int i = 0; i < numParticles; i++) {
-    nu[i] = ishydrogen[i]>0 ? 0.0 : test_gamma;
+    nu[i] = gammas[i]/roffset;
   }
   gvol->setGammas(nu);
 
-  vector<RealOpenMM> volumes_vdw(numParticles);
+  vector<RealOpenMM> volumes_large(numParticles);
   for(int i = 0; i < numParticles; i++){
-    volumes_vdw[i] = ishydrogen[i]>0 ? 0.0 : 4.*M_PI*pow(radii_vdw[i],3)/3.;
+    volumes_large[i] = ishydrogen[i]>0 ? 0.0 : 4.*M_PI*pow(radii_large[i],3)/3.;
   }
-  gvol->setVolumes(volumes_vdw);
+  gvol->setVolumes(volumes_large);
   
   gvol->compute_tree(pos);
-  if(verbose_level > 5){
+  if(verbose_level > 4){
     gvol->print_tree();
   }
-  RealOpenMM volume1, vol_energy1;
   gvol->compute_volume(pos, volume1, vol_energy1, vol_force, vol_dv, free_volume, self_volume);
   energy += w_evol * vol_energy1;
   for(int i = 0; i < numParticles; i++){
     force[i] += vol_force[i] * w_evol;
   }
 
+  if(verbose_level > 0){
+      cout << "vol 1: " << volume1 << endl;
+      cout << "energy 1: " << vol_energy1 << endl;
+  }
+
+  
   
   for(int i = 0; i < numParticles; i++){
     RealOpenMM rad = radii_vdw[i];
@@ -801,12 +815,8 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
   }
 
   
-  if(verbose_level > 0){
-      cout << "vol 1: " << volume1 << endl;
-      cout << "energy 1: " << vol_energy1 << endl;
-  }
 
-  //constructs molecular surface particles
+  //constructs molecular surface particles for volume energy function 1 (large radii)
   vector<MSParticle> msparticles1;
   double radw = solvent_radius;
   double volw = 4.*M_PI*pow(radw,3)/3.;
@@ -930,8 +940,9 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
   //obtain free volumes of ms spheres by summing over atoms scaled by their self volumes
   //saves into new list those with non-zero volume
   vector<MSParticle> msparticles2;
-  double ams = KFC/(solvent_radius*solvent_radius);
+  double ams = KFC/(radw*radw);
   GaussianVca gms, gatom, g12;
+  double energy_ms1, vol_ms1; 
   for(int ims = 0; ims < msparticles1.size() ; ims++){
     gms.a = ams;
     gms.v = msparticles1[ims].vol;
@@ -971,10 +982,6 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
     cout << "Number of ms particles with Vf > 0: " << msparticles2.size() << endl;
   }
 
-  vector<RealOpenMM> svadd(numParticles);
-  for(int iat=0;iat<numParticles;iat++){
-    svadd[iat] = 0.0;
-  }
 
 
   // now get the self-volumes of MS particles among themselves
@@ -985,11 +992,11 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
     // self-volumes of ms particles
     int num_ms = msparticles2.size();
     vector<RealOpenMM> radii_ms(num_ms);
-    for(int i=0;i<num_ms;i++) radii_ms[i] = solvent_radius;
+    for(int i=0;i<num_ms;i++) radii_ms[i] = radw;
     vector<RealOpenMM> volumes_ms(num_ms);
     for(int i=0;i<num_ms;i++) volumes_ms[i] = msparticles2[i].vol;
     vector<RealOpenMM> gammas_ms(num_ms);
-    for(int i=0;i<num_ms;i++) gammas_ms[i] = test_gamma;
+    for(int i=0;i<num_ms;i++) gammas_ms[i] = common_gamma/roffset;
     vector<int> ishydrogen_ms(num_ms);
     for(int i=0;i<num_ms;i++) ishydrogen_ms[i] = 0;
     vector<RealVec> pos_ms(num_ms);
@@ -1001,18 +1008,17 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
     gvolms->compute_tree(pos_ms);
     vector<RealVec> forces_ms(num_ms);
     vector<RealOpenMM> vol_dv_ms(num_ms), freevols_ms(num_ms), selfvols_ms(num_ms);
-    RealOpenMM vol_ms, energy_ms;
-    gvolms->compute_volume(pos_ms, vol_ms, energy_ms, forces_ms, vol_dv_ms, freevols_ms, selfvols_ms);
+    gvolms->compute_volume(pos_ms, vol_ms1, energy_ms1, forces_ms, vol_dv_ms, freevols_ms, selfvols_ms);
     
-    energy += w_evol_ms * energy_ms;
+    energy += w_evol_ms * energy_ms1;
     
     for(int i=0;i<num_ms;i++){
       msparticles2[i].selfvol = selfvols_ms[i];
     }
     
     if(verbose_level > 0){
-      cout << "vol_ms: " << vol_ms << endl;
-      cout << "energy_ms: " << energy_ms << endl;
+      cout << "vol_ms 1: " << vol_ms1 << endl;
+      cout << "energy_ms 1: " << energy_ms1 << endl;
     }
 
     if(verbose_level > 3){
@@ -1025,12 +1031,13 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
 #ifdef NOTNOW
     //test of forces_ms
     vector<RealVec> forces_ms2(num_ms);
-    double energy_save = energy_ms;
+    double energy_save = energy_ms1;
     for(int test_atom = 0; test_atom < num_ms ; test_atom++){
       RealVec displ = RealVec(0.001, -0.001, 0.001);
       RealVec save_pos = pos_ms[test_atom];
       pos_ms[test_atom] += displ;
       gvolms->compute_tree(pos_ms);
+      double vol_ms, energy_ms;
       gvolms->compute_volume(pos_ms, vol_ms, energy_ms, forces_ms2, vol_dv_ms, freevols_ms, selfvols_ms);
       cout << "DVX " << test_atom << " " << energy_ms - energy_save << " " << -forces_ms[test_atom].dot(displ) << endl;
       pos_ms[test_atom] = save_pos;
@@ -1040,13 +1047,14 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
 #ifdef NOTNOW
     //test of vol_dv
     vector<RealOpenMM> vol_dv2(num_ms);
-    double energy_save = energy_ms;
+    double energy_save = energy_ms1;
     for(int test_atom = 0; test_atom < num_ms ; test_atom++){
       double deltav = 0.001*volumes_ms[test_atom];
       double save_vol = volumes_ms[test_atom];
       volumes_ms[test_atom] += deltav;
       gvolms->setVolumes(volumes_ms);
       gvolms->compute_tree(pos_ms);
+      double vol_ms, energy_ms;
       gvolms->compute_volume(pos_ms, vol_ms, energy_ms, forces_ms, vol_dv2, freevols_ms, selfvols_ms);
       cout << "DVV " << test_atom << " " << energy_ms - energy_save << " " << deltav*vol_dv_ms[test_atom] << endl;
       volumes_ms[test_atom] = save_vol;
@@ -1057,7 +1065,7 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
     //test of gradient of energy_ms with respect to the change of Vol0 of atoms 
     vector<RealVec> forces_ms2(num_ms);
     vector<RealOpenMM> vol_dv2(num_ms);
-    double energy_save = energy_ms;
+    double energy_save = energy_ms1;
     for(int test_atom = 0; test_atom < num_ms ; test_atom++){
       double deltav = 0.001*msparticles2[test_atom].vol0;
       double save_vol = msparticles2[test_atom].vol0;
@@ -1086,6 +1094,7 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
       
       gvolms->setVolumes(volumes_ms);
       gvolms->compute_tree(pos_ms);
+      double vol_ms, energy_ms;
       gvolms->compute_volume(pos_ms, vol_ms, energy_ms, forces_ms2, vol_dv2, freevols_ms, selfvols_ms);
 
       cout << "DVV0 " << test_atom << " " << energy_ms - energy_save << " " << dems << endl;
@@ -1171,7 +1180,8 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
     //derivatives of energy_ms from change in self volumes OK
     gvol->setGammas(numsder);
     gvol->rescan_tree_gammas();
-    gvol->compute_volume(pos, volume1, vol_energy1, vol_force, vol_dv, free_volume, self_volume);
+    double volume, vol_energy;
+    gvol->compute_volume(pos, volume, vol_energy, vol_force, vol_dv, free_volume, self_volume);
     for(int i = 0; i < numParticles; i++){
       force[i] += vol_force[i] * w_evol_ms;
 
@@ -1182,7 +1192,7 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
     {
       //test gradients
       RealVec displ = RealVec(-0.001, -0.001, 0.002);
-      double old_energy_ms = energy_ms;
+      double old_energy_ms = energy_ms1;
       vector<MSParticle> msparticles3(num_ms);
       vector<RealOpenMM> volumes_ms3(num_ms);
       
@@ -1197,7 +1207,8 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
 
 	//get new self-volumes //debug
 	gvol->compute_tree(pos);
-	gvol->compute_volume(pos, volume1, vol_energy1, vol_force, vol_dv, free_volume, self_volume);
+	double volume, vol_energy;
+	gvol->compute_volume(pos, volume, vol_energy, vol_force, vol_dv, free_volume, self_volume);
 
 	//get new vol0's
 	//pos[test_particle] = save_pos;//debug
@@ -1251,6 +1262,7 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
 	
 	gvolms->setVolumes(volumes_ms3);
 	gvolms->compute_tree(pos_ms);
+	double vol_ms, energy_ms;
 	gvolms->compute_volume(pos_ms, vol_ms, energy_ms, forces_ms, vol_dv_ms, freevols_ms, selfvols_ms);
 
 
@@ -1260,8 +1272,261 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
       }
     }
 #endif
+
+
+    //no longer needs gvol instance
+    delete gvolms;
+  }
+
+  // volume energy function 2 (small radii)
+  RealOpenMM vol_energy2, volume2;
+  
+  gvol->setRadii(radii_vdw);
+  
+  for(int i = 0; i < numParticles; i++){
+    nu[i] = -gammas[i]/roffset;
+  }
+  gvol->setGammas(nu);
+  
+  vector<RealOpenMM> volumes_vdw(numParticles);
+  for(int i = 0; i < numParticles; i++){
+    volumes_vdw[i] = ishydrogen[i]>0 ? 0.0 : 4.*M_PI*pow(radii_vdw[i],3)/3.;
+  }
+  gvol->setVolumes(volumes_vdw);
+  
+  gvol->rescan_tree_volumes(pos);
+  gvol->compute_volume(pos, volume2, vol_energy2, vol_force, vol_dv, free_volume, self_volume);
+  
+  for(int i = 0; i < numParticles; i++){
+    force[i] += vol_force[i] * w_evol;
+  }
+  energy += vol_energy2 * w_evol;
+  if(verbose_level > 0){
+    cout << "Volume energy 2: " << vol_energy2 << endl;
+    cout << "Atom Surface area energy: " << vol_energy1 + vol_energy2 << endl;
+  }
+
+  //now main overlap tree is set up with small radii
+
+  //constructs molecular surface particles for volume energy function 2 (small radii)
+
+  msparticles1.clear();
+  radw = solvent_radius;
+  nms = 0;
+  for(int i = 0; i < numParticles; i++){
+    if(ishydrogen[i]>0) continue;
+    double rad1 = radii_vdw[i];
+    for(int j = i + 1; j < numParticles; j++){
+      if(ishydrogen[j]>0) continue;
+      double rad2 = radii_vdw[j];
+      double q = sqrt(rad1*rad2)/radw;
+      RealVec dist = pos[j] - pos[i];
+      RealOpenMM d = sqrt(dist.dot(dist));
+      //      cout << d << " " << rad1 + rad2 << " " << rad1 + rad2 + 2*radw << endl;
+      if(d < rad1 + rad2 + 2*radw ){
+	//pair ms volume when the two atoms overlap
+	double dms = rad1 + rad2 + 0.5*radw;
+	double volms0 = vol_coeff*q*q*volw;
+	double sigma = 0.5*sqrt(q)*radw;
+	double volms = volms0*exp(-0.5*(d-dms)*(d-dms)/(sigma*sigma));
+	double sp;
+	double s = pol_switchfunc(volms, VOLMINMSA, VOLMINMSB, sp);
+	double volmsw = volms*s;
+	double sder = s + volms*sp;
+	if(volmsw > FLT_MIN){
+	  //position of MS particle
+	  //double distms_from_1 = 0.5*(d - rad1 - rad2) + rad1;//midpoint of the two surfaces
+	  //RealVec distu = dist * (1/d);
+	  //RealVec posms = distu * distms_from_1 + pos[i];
+	  RealOpenMM fms = 0.5 * (1. + (rad1 - rad2)/d);
+	  RealOpenMM gms = 1. - fms;
+	  RealVec posms = pos[j] * fms + pos[i] * gms;
+	  if(verbose_level > 3){
+	    cout << "S  " << 10.0*posms[0] << " " << 10.0*posms[1] << " " << 10.0*posms[2] << " " << nms << " " << volms << endl;
+	  }
+	  MSParticle msp;
+	  msp.vol = volmsw;
+	  msp.vol0 = volmsw;
+	  msp.pos = posms;
+	  msp.parent1 = i;
+	  msp.parent2 = j;
+	  msp.gder = dist *  sder*(d-dms)*volms/(d*sigma*sigma); //used for volume derivatives
+	  msp.hder = dist * 0.5*(rad1 - rad2)/(d*d*d); //used to compute positional derivatives
+	  msp.fms = fms;
+	  msparticles1.push_back(msp);
+	  nms += 1;
+	}
+
+      }
+    }
+  }
     
-    //add ms self-volumes to parents
+  //obtain free volumes of ms spheres by summing over atoms scaled by their self volumes
+  //saves into new list those with non-zero volume
+  msparticles2.clear();
+  ams = KFC/(radw*radw);
+  double energy_ms2, vol_ms2;
+  for(int ims = 0; ims < msparticles1.size() ; ims++){
+    gms.a = ams;
+    gms.v = msparticles1[ims].vol;
+    gms.c = msparticles1[ims].pos;
+    RealOpenMM freevolms = msparticles1[ims].vol;
+    double G0m = 0;
+    for(int i=0;i<numParticles;i++){
+      if(ishydrogen[i]>0) continue;
+      RealOpenMM rad = radii_vdw[i];
+      RealOpenMM ai = KFC/(rad*rad);
+      RealOpenMM voli = self_volume[i];
+      gatom.a = ai;
+      gatom.v = voli;
+      gatom.c = pos[i];
+      RealOpenMM dVdr, dVdV, sfp;
+      freevolms -= ogauss_alpha(gms, gatom, g12, dVdr, dVdV, sfp);
+      G0m += sfp*g12.v;
+    }
+    if(freevolms > VOLMINMSA){
+      MSParticle msp;
+      double sp;
+      msp = msparticles1[ims];
+      double s = pol_switchfunc(freevolms, VOLMINMSA, VOLMINMSB, sp);
+      msp.vol = freevolms*s;
+      msp.ssp = s + sp*freevolms;
+      msp.pos = gms.c;
+      msp.G0 = G0m;
+      msparticles2.push_back(msp);
+      if(verbose_level > 3){
+	cout << "O " << 10.0*msp.pos[0] << " " << 10.0*msp.pos[1] << " " <<  10.0*msp.pos[2] << " " << msparticles2.size()-1 << " " << msp.vol << " " << msp.parent1 << " " << msp.parent2 << endl;
+}
+    }
+  }
+
+  if(verbose_level > 0){
+    cout << "Number of ms particles: " << msparticles1.size() << endl;
+    cout << "Number of ms particles with Vf > 0: " << msparticles2.size() << endl;
+  }
+
+  // now get the self-volumes of MS particles among themselves
+  // and add them to the self-volumes of the parent atoms
+  
+  if(msparticles2.size() > 0){
+
+    // self-volumes of ms particles
+    int num_ms = msparticles2.size();
+    vector<RealOpenMM> radii_ms(num_ms);
+    for(int i=0;i<num_ms;i++) radii_ms[i] = radw;
+    vector<RealOpenMM> volumes_ms(num_ms);
+    for(int i=0;i<num_ms;i++) volumes_ms[i] = msparticles2[i].vol;
+    vector<RealOpenMM> gammas_ms(num_ms);
+    for(int i=0;i<num_ms;i++) gammas_ms[i] = -common_gamma/roffset;
+    vector<int> ishydrogen_ms(num_ms);
+    for(int i=0;i<num_ms;i++) ishydrogen_ms[i] = 0;
+    vector<RealVec> pos_ms(num_ms);
+    for(int i=0;i<num_ms;i++) pos_ms[i] = msparticles2[i].pos;
+    GaussVol *gvolms = new GaussVol(msparticles2.size(), ishydrogen_ms);
+    gvolms->setRadii(radii_ms);
+    gvolms->setVolumes(volumes_ms);
+    gvolms->setGammas(gammas_ms);
+    gvolms->compute_tree(pos_ms);
+    vector<RealVec> forces_ms(num_ms);
+    vector<RealOpenMM> vol_dv_ms(num_ms), freevols_ms(num_ms), selfvols_ms(num_ms);
+    gvolms->compute_volume(pos_ms, vol_ms2, energy_ms2, forces_ms, vol_dv_ms, freevols_ms, selfvols_ms);
+    
+    energy += w_evol_ms * energy_ms2;
+    
+    for(int i=0;i<num_ms;i++){
+      msparticles2[i].selfvol = selfvols_ms[i];
+    }
+    
+    if(verbose_level > 0){
+      cout << "vol_ms 2: " << vol_ms2 << endl;
+      cout << "energy_ms 2: " << energy_ms2 << endl;
+
+      cout << "MS Surface area energy: " << energy_ms1 + energy_ms2 << endl;
+      cout << "Total Surface area energy: " << vol_energy1 + vol_energy2 + energy_ms1 + energy_ms2 << endl;
+      
+      cout << endl;
+    }
+
+    
+
+    
+    if(verbose_level > 3){
+      cout << "MS Self Volumes:" << endl;
+      for(int i=0;i<num_ms;i++){
+	cout << i << " " << selfvols_ms[i] << endl;
+      }
+    }
+
+    //forces for energy_ms due to MS particle displacement OK
+    for(int ims = 0; ims < msparticles2.size() ; ims++){
+      int i = msparticles2[ims].parent1;
+      int j = msparticles2[ims].parent2;
+      RealVec dist = pos[j] - pos[i];
+      RealVec hder = msparticles2[ims].hder;
+      double fms = msparticles2[ims].fms;
+      double gms = 1. - fms;
+      double evprod =  w_evol_ms * forces_ms[ims].dot(dist);
+      force[i] +=  hder * (+w_evol_ms*evprod) + forces_ms[ims] *  w_evol_ms*gms;
+      force[j] +=  hder * (-w_evol_ms*evprod) + forces_ms[ims] *  w_evol_ms*fms;
+    }
+
+    //forces of energy_ms wrt of changing MS volumes due to changes of overlap volumes OK
+    for(int ims = 0; ims < msparticles2.size() ; ims++){
+      int parent1 = msparticles2[ims].parent1;
+      int parent2 = msparticles2[ims].parent2;
+      RealVec gder = msparticles2[ims].gder;
+      double ssp = msparticles2[ims].ssp;
+      double vol = msparticles2[ims].vol;
+      double vol0 = msparticles2[ims].vol0;
+      double G0m = msparticles2[ims].G0;
+      double fv = w_evol_ms*ssp*vol_dv_ms[ims]*(1. - G0m/vol0);
+      force[parent1] -= gder * fv;
+      force[parent2] += gder * fv;
+    }
+
+    //forces of energy_ms wrt of changing MS volumes due to changes of overlap volumes OK
+    vector<double> numsder(numParticles);
+    for(int i=0;i<numParticles;i++) numsder[i] = 0.0;
+    for(int i=0;i<numParticles;i++){
+      if (ishydrogen[i]>0) continue;
+      RealOpenMM rad = radii_vdw[i];
+      RealOpenMM ai = KFC/(rad*rad);
+      RealOpenMM voli = self_volume[i];
+      gatom.a = ai;
+      gatom.v = voli;
+      gatom.c = pos[i];
+      for(int ims = 0; ims < msparticles2.size() ; ims++){
+	gms.a = ams;
+	gms.v = msparticles2[ims].vol0;
+	gms.c = msparticles2[ims].pos;
+	double ssp = msparticles2[ims].ssp;
+	RealOpenMM dVdr, dVdV, sfp;
+	ogauss_alpha(gms, gatom, g12, dVdr, dVdV, sfp);
+	force[i] += (gatom.c - gms.c) * w_evol_ms*ssp*sfp*dVdr*vol_dv_ms[ims];
+	numsder[i] += w_evol_ms*ssp*sfp*g12.v*vol_dv_ms[ims];
+      }
+
+      numsder[i] /= -voli;
+    }
+
+    //derivatives of energy_ms from change in self volumes OK
+    gvol->setGammas(numsder);
+    gvol->rescan_tree_gammas();
+    gvol->compute_volume(pos, volume1, vol_energy1, vol_force, vol_dv, free_volume, self_volume);
+    for(int i = 0; i < numParticles; i++){
+      force[i] += vol_force[i] * w_evol_ms;
+    }
+
+    //no longer needs gvol instance
+    delete gvolms;
+ 
+  
+    //add ms self-volumes (with small radii) to parents
+    vector<RealOpenMM> svadd(numParticles);
+    for(int iat=0;iat<numParticles;iat++){
+      svadd[iat] = 0.0;
+    }
+    
     for(int i=0;i<num_ms;i++) {
       int iat = msparticles2[i].parent1;
       int jat = msparticles2[i].parent2;
@@ -1281,12 +1546,13 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
 	cout << "SV " <<  iat << " " << self_volume[iat] << " " << self_volume[iat]+svadd[iat] << " " << r << " " << self_volume[iat]/vol << endl;
       }
     }
-
+    
     for(int iat=0;iat<numParticles;iat++){
       self_volume[iat] += svadd[iat];
     }
     
   }
+
 
 
 #ifdef NOTNOW

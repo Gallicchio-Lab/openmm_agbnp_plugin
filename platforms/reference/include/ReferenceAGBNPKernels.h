@@ -76,6 +76,7 @@ private:
     std::vector<RealOpenMM> radii_vdw;
     std::vector<RealOpenMM> radii_large;
     std::vector<RealOpenMM> gammas;
+    double common_gamma;
     std::vector<RealOpenMM> vdw_alpha;
     std::vector<RealOpenMM> charge;
     //outputs
@@ -87,6 +88,7 @@ private:
     std::vector<RealOpenMM> inverse_born_radius;
     std::vector<RealOpenMM> inverse_born_radius_fp;
     std::vector<RealOpenMM> born_radius;
+    double roffset;
     double solvent_radius;
     
     double executeGVolSA(OpenMM::ContextImpl& context, bool includeForces, bool includeEnergy);

@@ -168,6 +168,7 @@ private:
     bool usePeriodic;
     bool useExclusions;
     double cutoffDistance;
+    double roffset;
     int maxTiles;
     bool hasInitializedKernels;
     bool hasCreatedKernels;

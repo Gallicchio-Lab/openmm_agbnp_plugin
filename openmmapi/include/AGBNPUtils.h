@@ -2,7 +2,8 @@
 #define AGBNP_UTILS_H_
 
 #include <iostream>
-#include "gaussvol.h"
+//#include "gaussvol.h"
+#include "AGBNPForce.h"
 #include "openmm/internal/SplineFitter.h"
 
 using namespace OpenMM;
@@ -151,11 +152,7 @@ class AGBNPI4LookupTable {
 // Rj = van der Waals radius + Roffset (enlarged radii)
 // Radii in input are assumed to be Rj's: van der Waals radii + Roffset
 
-//radius offset for Born radii calculation
-//same as radius offset in GaussVol
-#define AGBNP_RADIUS_INCREMENT (SA_DR)
 #define AGBNP_RADIUS_PRECISION      (10000)
-#define AGBNP_HB_RADIUS (1.4*ANG) //radius of a water molecule
 
 class AGBNPI42DLookupTable {
  public:
@@ -172,7 +169,7 @@ class AGBNPI42DLookupTable {
   vector<int> radius_type_screened; //"screened" radius types for each atom
   vector<int> radius_type_screener; //"screener" radius types for each atom
 
-  //compares two radii with some precision (rad_precision is set by default in class constructor)
+  //compares two radii with some precision
   struct compare_pp10t {
     bool operator() (const double& dlhs, const double& drhs) const{
       long int ilhs = dlhs * AGBNP_RADIUS_PRECISION;

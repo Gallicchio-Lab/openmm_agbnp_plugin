@@ -62,22 +62,6 @@ using namespace OpenMM;
 #define VOLMINA (0.01f*ANG3)
 #define VOLMINB (0.1f*ANG3)
 
-//volume cutoffs for MS spheres
-//#define VOLMINMSA (0.5f*ANG3)
-//#define VOLMINMSB (1.0f*ANG3)
-
-#define VOLMINMSA (0.25f*ANG3)
-#define VOLMINMSB (0.5f*ANG3)
-
-
-//#define VOLMINMSA (0.01f*ANG3)
-//#define VOLMINMSB (0.5f*ANG3)
-
-
-
-//radius offset for surf energy calc.
-#define SA_DR (0.5f*ANG)
-
 /* 3D Gaussian, V,c,a representation */
 class GaussianVca {
  public:
