@@ -6,16 +6,18 @@
  * This tests the Reference implementation of AGBNPForce.
  */
 
+#include <cmath>
+#include <iostream>
+#include <vector>
+#include <cstdlib>
 #include "AGBNPForce.h"
 #include "openmm/internal/AssertionUtilities.h"
 #include "openmm/Context.h"
 #include "openmm/Platform.h"
 #include "openmm/System.h"
+#include "openmm/reference/RealVec.h"
 #include "openmm/VerletIntegrator.h"
 #include "openmm/NonbondedForce.h"
-#include <cmath>
-#include <iostream>
-#include <vector>
 
 using namespace AGBNPPlugin;
 using namespace OpenMM;
@@ -38,6 +40,7 @@ void testForce() {
     double epsilon, sigma, bornr;
     double gamma;
     bool ishydrogen;
+    vector<int> ihi;
     vector<Vec3> positions;
     std::cin >> numParticles;
     int ih;
@@ -55,6 +58,7 @@ void testForce() {
       std::cin >> id >> x >> y >> z >> radius >> charge >> gamma >> ih;
       system.addParticle(1.0);
       positions.push_back(Vec3(x, y, z)*ang2nm);
+      ihi.push_back(ih);
       ishydrogen = (ih > 0);
       radius *= ang2nm;
       gamma *= kcalmol2kjmol/(ang2nm*ang2nm);
@@ -86,8 +90,31 @@ void testForce() {
       }
     }
     
+#ifdef NOTNOW
+    // validate force by moving heavy atoms
+    vector<RealVec> forces;
+    for(int i = 0; i < numParticles; i++){
+      forces.push_back(state.getForces()[i]);
+    }
+    double offset = 2.e-4;
+    double max =  offset;
+    double min = -offset;
+    for(int i=0; i<numParticles; i++){
+      if(ihi[i] > 0) continue;
+      double dx = ((double) rand() / (RAND_MAX)) * (max-min) + min;
+      double dy = ((double) rand() / (RAND_MAX)) * (max-min) + min;
+      double dz = ((double) rand() / (RAND_MAX)) * (max-min) + min;
+      RealVec displ = RealVec(dx,dy,dz);
+      RealVec save_pos = positions[i];
+      positions[i] += displ;
+      context.setPositions(positions);
+      double energy2 = context.getState(State::Energy).getPotentialEnergy();
+      double de = -forces[i].dot(displ);
+      std::cout << "P " << i << " " << energy2 - energy1 << " " << de << endl;
+      positions[i] = save_pos;
+    }
+#endif
     //#ifdef NOTNOW
-    // validate force by moving an atom
     double offset = 2.e-3;
     int pmove = 121;
     int direction = 1;

@@ -232,7 +232,14 @@ class GaussVol {
     this->gammas = gammas;
     this->ishydrogen = ishydrogen;
   }
-
+  ~GaussVol(void){
+    delete tree;
+    radii.clear();
+    volumes.clear();
+    gammas.clear();
+    ishydrogen.clear();
+  }
+  
   
   int setRadii(vector<RealOpenMM> &radii){
     if(natoms == radii.size()){

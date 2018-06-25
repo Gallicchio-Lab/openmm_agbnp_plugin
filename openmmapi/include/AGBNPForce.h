@@ -16,11 +16,14 @@
 
 //volume cutoffs for MS spheres
 //those for atomic overlaps are defined in gaussvol.h
+//#define VOLMINMSA (0.25f*ANG3)
+//#define VOLMINMSB (0.5f*ANG3)
 #define VOLMINMSA (0.25f*ANG3)
-#define VOLMINMSB (0.5f*ANG3)
+#define VOLMINMSB (1.00f*ANG3)
 
 //radius offset for surf energy calc.
 #define AGBNP_RADIUS_INCREMENT (0.5f*ANG)
+
 #define AGBNP2_RADIUS_INCREMENT (0.1f*ANG)
 
 //radius of a water molecule for AGBNP2

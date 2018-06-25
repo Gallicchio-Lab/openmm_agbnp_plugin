@@ -32,7 +32,6 @@ public:
     charge.clear();
     free_volume.clear();
     self_volume.clear();
-    surface_areas.clear();
     vol_force.clear();
     vol_dv.clear();
     volume_scaling_factor.clear();
@@ -80,7 +79,9 @@ private:
     std::vector<RealOpenMM> vdw_alpha;
     std::vector<RealOpenMM> charge;
     //outputs
-    std::vector<RealOpenMM> free_volume, self_volume, surface_areas;
+    std::vector<RealOpenMM> free_volume, self_volume;
+    std::vector<RealOpenMM> free_volume_vdw, self_volume_vdw;
+    std::vector<RealOpenMM> free_volume_large, self_volume_large;
     std::vector<RealVec> vol_force;
     std::vector<RealOpenMM> vol_dv;
     AGBNPI42DLookupTable *i4_lut;
@@ -104,17 +105,19 @@ private:
  class MSParticle {
  public:
    double vol;
+   double vol_large;
+   double vol_vdw;
    double vol0;
-   double ssp;
-   double freevol;
-   double selfvol;
+   double ssp_large;
+   double ssp_vdw;
    RealVec pos;
    int parent1;
    int parent2;
    RealVec gder;//used for volume derivatives
    RealVec hder;//used for positional derivatives
    double fms;
-   double G0; //accumulator for derivatives
+   double G0_vdw; //accumulator for derivatives
+   double G0_large;
  };
 
  

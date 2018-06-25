@@ -75,7 +75,7 @@ RealOpenMM ogauss_alpha(GaussianVca &g1, GaussianVca &g2, GaussianVca &g12, Real
   ef = exp(-df*d2);
   gvol = ( (g1.v * g2.v)/pow(PI/df,1.5))*ef;
   dgvol = -2.f*df*gvol; // (1/r)*(dV/dr) w/o switching function
-  dgvolv = gvol/g1.v;     // (dV/dV1)  w/o switching function
+  dgvolv = g1.v > 0 ? gvol/g1.v : 0.0;     // (dV/dV1)  w/o switching function
 
   /* parameters for overlap gaussian. Note that c1 and c2 are Vec3's and the "*" operator wants 
      the vector first and scalar second vector2 = vector1 * scalar */
@@ -599,7 +599,9 @@ void GaussVol::compute_volume(vector<RealVec> &positions,
 			  free_volume, self_volume); 
   for(int i = 0; i < natoms; ++i) force[i] = -force[i];//transform gradient to force
   for(int i = 0; i < natoms; ++i) {
-    if(volumes[i] > 0) gradV[i] = gradV[i]/volumes[i];
+    if(volumes[i] > 0) {
+      gradV[i] = gradV[i]/volumes[i];
+    }
   }
 }
 
