@@ -68,8 +68,14 @@ OpenCLCalcAGBNPForceKernel::~OpenCLCalcAGBNPForceKernel() {
 static int _nov_ = 0;
 
 
-void OpenCLCalcAGBNPForceKernel::init_tree_size(int pad_modulo,
-						vector<int>& noverlaps_current)  {
+void OpenCLCalcAGBNPForceKernel::OpenCLOverlapTree::init_tree_size(int num_atoms,
+								   int padded_num_atoms,
+								   int num_compute_units,
+								   int pad_modulo,
+								   vector<int>& noverlaps_current)  {
+  this->num_atoms = num_atoms;
+  this->padded_num_atoms = padded_num_atoms;
+
   total_tree_size = 0;
   tree_size.clear();
   tree_pointer.clear();
@@ -82,32 +88,32 @@ void OpenCLCalcAGBNPForceKernel::init_tree_size(int pad_modulo,
   //Remember the largest number of overlaps per atom because if it went over the max before it
   //is likely to happen again
   if(!has_saved_noverlaps){
-    saved_noverlaps.resize(cl.getNumAtoms());
-    for(int i=0;i<cl.getNumAtoms();i++) saved_noverlaps[i] = 0;
+    saved_noverlaps.resize(num_atoms);
+    for(int i=0;i<num_atoms;i++) saved_noverlaps[i] = 0;
     has_saved_noverlaps = true;
   }
-  vector<int> noverlaps(cl.getNumAtoms());
-  for(int i=0;i<cl.getNumAtoms();i++){
+  vector<int> noverlaps(num_atoms);
+  for(int i=0;i<num_atoms;i++){
     noverlaps[i] = (saved_noverlaps[i] > noverlaps_current[i]) ? saved_noverlaps[i] : noverlaps_current[i] + 1;
     //(the +1 above counts the 1-body overlap)
   }
-  for(int i=0;i<cl.getNumAtoms();i++) saved_noverlaps[i] = noverlaps[i];
+  for(int i=0;i<num_atoms;i++) saved_noverlaps[i] = noverlaps[i];
 
   //assigns atoms to compute units (tree sections) in such a way that each compute unit gets
   //approximately equal number of overlaps
   num_sections = num_compute_units;
-  vector<int> noverlaps_sum(cl.getNumAtoms()+1);//prefix sum of number of overlaps per atom
+  vector<int> noverlaps_sum(num_atoms+1);//prefix sum of number of overlaps per atom
   noverlaps_sum[0] = 0;
-  for(int i=1;i <= cl.getNumAtoms();i++){
+  for(int i=1;i <= num_atoms;i++){
     noverlaps_sum[i] = noverlaps[i-1] +  noverlaps_sum[i-1];
   }
-  int n_overlaps_total = noverlaps_sum[cl.getNumAtoms()];
+  int n_overlaps_total = noverlaps_sum[num_atoms];
 
-  //  for(int i=0;i < cl.getNumAtoms();i++){
+  //  for(int i=0;i < num_atoms;i++){
   //  cout << "nov " << i << " noverlaps " << noverlaps[i] << " " <<  noverlaps_sum[i] << endl;
   //}
   int max_n_overlaps = 0;
-  for(int i=0;i < cl.getNumAtoms();i++){
+  for(int i=0;i < num_atoms;i++){
     if (noverlaps[i] > max_n_overlaps) max_n_overlaps = noverlaps[i];
   }
   
@@ -123,13 +129,13 @@ void OpenCLCalcAGBNPForceKernel::init_tree_size(int pad_modulo,
 
   
   //assigns atoms to compute units
-  vector<int> compute_unit_of_atom(cl.getNumAtoms());
+  vector<int> compute_unit_of_atom(num_atoms);
   total_atoms_in_tree = 0;
   natoms_in_tree.resize(num_sections);
   for(int section = 0; section < num_sections; section++){
     natoms_in_tree[section] = 0;
   }
-  for(int i=0;i < cl.getNumAtoms();i++){
+  for(int i=0;i < num_atoms;i++){
     int section = noverlaps_sum[i]/n_overlaps_per_section;
     compute_unit_of_atom[i] = section;
     natoms_in_tree[section] += 1;
@@ -141,7 +147,7 @@ void OpenCLCalcAGBNPForceKernel::init_tree_size(int pad_modulo,
   for(int section = 0; section < num_sections; section++){
     section_size[section] = 0;
   }
-  for(int i=0;i < cl.getNumAtoms();i++){
+  for(int i=0;i < num_atoms;i++){
     int section = compute_unit_of_atom[i];
     section_size[section] += noverlaps[i];
   }
@@ -164,7 +170,7 @@ void OpenCLCalcAGBNPForceKernel::init_tree_size(int pad_modulo,
   // set atom pointer in tree
   tree_size.resize(num_sections);
   padded_tree_size.resize(num_sections);
-  atom_tree_pointer.resize(cl.getPaddedNumAtoms());
+  atom_tree_pointer.resize(padded_num_atoms);
   first_atom.resize(num_sections);
   int atom_offset = 0;
   for(int section = 0; section < num_sections; section++){
@@ -184,14 +190,109 @@ void OpenCLCalcAGBNPForceKernel::init_tree_size(int pad_modulo,
 
 }
 
+void OpenCLCalcAGBNPForceKernel::OpenCLOverlapTree::resize_tree_buffers(OpenMM::OpenCLContext& cl, int ov_work_group_size, bool hasExceededTempBuffer){
+  if(ovAtomTreePointer) delete ovAtomTreePointer;
+  ovAtomTreePointer = OpenCLArray::create<cl_int>(cl, padded_num_atoms, "ovAtomTreePointer");
+  if(ovAtomTreeSize) delete ovAtomTreeSize;
+  ovAtomTreeSize = OpenCLArray::create<cl_int>(cl, num_sections, "ovAtomTreeSize");
+  if(NIterations) delete NIterations;
+  NIterations = OpenCLArray::create<cl_int>(cl, num_sections, "NIterations");
+  if(ovAtomTreePaddedSize) delete ovAtomTreePaddedSize;
+  ovAtomTreePaddedSize = OpenCLArray::create<cl_int>(cl, num_sections, "ovAtomTreePaddedSize");
+  if(ovNumAtomsInTree) delete ovNumAtomsInTree;
+  ovNumAtomsInTree = OpenCLArray::create<cl_int>(cl, num_sections, "ovNumAtomsInTree");
+  if(ovTreePointer) delete ovTreePointer;
+  ovTreePointer = OpenCLArray::create<cl_int>(cl, num_sections, "ovTreePointer");
+  if(ovAtomTreeLock) delete ovAtomTreeLock;
+  ovAtomTreeLock = OpenCLArray::create<cl_int>(cl, num_sections, "ovAtomTreeLock");
+  if(ovFirstAtom) delete ovFirstAtom;
+  ovFirstAtom = OpenCLArray::create<cl_int>(cl, num_sections, "ovFirstAtom");
+  if(ovLevel) delete ovLevel;
+  ovLevel = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovLevel");
+  if(ovG) delete ovG;
+  ovG = OpenCLArray::create<mm_float4>(cl, total_tree_size, "ovG"); //gaussian position + exponent
+  if(ovVolume) delete ovVolume;
+  ovVolume = OpenCLArray::create<cl_float>(cl, total_tree_size, "ovVolume");
+  if(ovVSfp) delete ovVSfp;
+  ovVSfp = OpenCLArray::create<cl_float>(cl, total_tree_size, "ovVSfp");
+  if(ovSelfVolume) delete ovSelfVolume;
+  ovSelfVolume = OpenCLArray::create<cl_float>(cl, total_tree_size, "ovSelfVolume");
+  if(ovVolEnergy) delete ovVolEnergy;
+  ovVolEnergy = OpenCLArray::create<cl_double>(cl, total_tree_size, "ovVolEnergy");
+  if(ovGamma1i) delete ovGamma1i;
+  ovGamma1i = OpenCLArray::create<cl_float>(cl, total_tree_size, "ovGamma1i");
+  if(ovDV1) delete ovDV1;
+  ovDV1 = OpenCLArray::create<mm_float4>(cl, total_tree_size, "ovDV1"); //dV12/dr1 + dV12/dV1 for each overlap
+  if(ovDV2) delete ovDV2;
+  ovDV2 = OpenCLArray::create<mm_float4>(cl, total_tree_size, "ovDV2"); //volume gradient accumulator
+  if(ovPF) delete ovPF;
+  ovPF = OpenCLArray::create<mm_float4>(cl, total_tree_size, "ovPF"); //(P) and (F) auxiliary variables
+  if(ovLastAtom) delete ovLastAtom;
+  ovLastAtom = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovLastAtom");
+  if(ovRootIndex) delete ovRootIndex;
+  ovRootIndex = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovRootIndex");
+  if(ovChildrenStartIndex) delete ovChildrenStartIndex;
+  ovChildrenStartIndex = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovChildrenStartIndex");
+  if(ovChildrenCount) delete ovChildrenCount;
+  ovChildrenCount = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovChildrenCount");
+  if(ovChildrenCountTop) delete ovChildrenCountTop;
+  ovChildrenCountTop = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovChildrenCountTop");
+  if(ovChildrenCountBottom) delete ovChildrenCountBottom;
+  ovChildrenCountBottom = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovChildrenCountBottom");
+  if(ovProcessedFlag) delete ovProcessedFlag;
+  ovProcessedFlag = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovProcessedFlag");
+  if(ovOKtoProcessFlag) delete ovOKtoProcessFlag;
+  ovOKtoProcessFlag = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovOKtoProcessFlag");
+  if(ovChildrenReported) delete ovChildrenReported;
+  ovChildrenReported = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovChildrenReported");
+  
+  
+  // atomic reduction buffers, one for each tree section
+  // used only if long int atomics are not available
+  //   ovAtomBuffer holds volume energy derivatives (in xyz)
+  if(ovAtomBuffer) delete ovAtomBuffer;
+  ovAtomBuffer = OpenCLArray::create<mm_float4>(cl, cl.getPaddedNumAtoms()*num_sections, "ovAtomBuffer");
+  
+  //regular and "long" versions of selfVolume accumulation buffer (the latter updated using atomics)
+  if(selfVolumeBuffer) delete selfVolumeBuffer;
+  selfVolumeBuffer = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms()*num_sections, "selfVolumeBuffer");
+  if(selfVolumeBuffer_long) delete selfVolumeBuffer_long;
+  selfVolumeBuffer_long = OpenCLArray::create<cl_long>(cl, cl.getPaddedNumAtoms(), "selfVolumeBuffer_long");
+  
+  //traditional and "long" versions of general accumulation buffers
+  if(!AccumulationBuffer1_real) delete AccumulationBuffer1_real;
+  AccumulationBuffer1_real = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms()*num_sections, "AccumulationBuffer1_real");
+  if(!AccumulationBuffer1_long) delete AccumulationBuffer1_long;
+  AccumulationBuffer1_long = OpenCLArray::create<cl_long>(cl, cl.getPaddedNumAtoms(), "AccumulationBuffer1_long");
+  if(!AccumulationBuffer2_real) delete AccumulationBuffer2_real;
+  AccumulationBuffer2_real = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms()*num_sections, "AccumulationBuffer2_real");
+  if(!AccumulationBuffer2_long) delete AccumulationBuffer2_long;
+  AccumulationBuffer2_long = OpenCLArray::create<cl_long>(cl, cl.getPaddedNumAtoms(), "AccumulationBuffer2_long");
+  
+  //temp buffers to cache intermediate data in overlap tree construction (3-body and up)
+  if(!hasExceededTempBuffer) {//first time or panic for other reasons
+    int smax = 64; // this is n*(n-1)/2 where n is the max number of neighbors per overlap
+    temp_buffer_size = ov_work_group_size*num_sections*smax;//first time
+  }else{
+    temp_buffer_size = 2*temp_buffer_size;
+  }
+  if(gvol_buffer_temp) delete gvol_buffer_temp;
+  gvol_buffer_temp = OpenCLArray::create<cl_float>(cl, temp_buffer_size, "gvol_buffer_temp");
+  if(tree_pos_buffer_temp) delete tree_pos_buffer_temp;
+  tree_pos_buffer_temp = OpenCLArray::create<cl_uint>(cl, temp_buffer_size, "tree_pos_buffer_temp");
+  if(i_buffer_temp) delete i_buffer_temp;
+  i_buffer_temp = OpenCLArray::create<cl_int>(cl, temp_buffer_size, "i_buffer_temp");
+  if(atomj_buffer_temp) delete atomj_buffer_temp;
+  atomj_buffer_temp = OpenCLArray::create<cl_int>(cl, temp_buffer_size, "atomj_buffer_temp");
+}
 
-int OpenCLCalcAGBNPForceKernel::copy_tree_to_device(void){
 
-  int padsize = cl.getPaddedNumAtoms();
-  vector<cl_int> nn(padsize);
+int OpenCLCalcAGBNPForceKernel::OpenCLOverlapTree::copy_tree_to_device(void){
+
+  vector<cl_int> nn(padded_num_atoms);
   vector<cl_int> ns(num_sections);  
 
-  for(int i = 0; i < padsize ; i++){
+  for(int i = 0; i < padded_num_atoms ; i++){
     nn[i] = (cl_int) atom_tree_pointer[i];
   }
   ovAtomTreePointer->upload(nn);
@@ -357,6 +458,9 @@ void OpenCLCalcAGBNPForceKernel::initialize(const System& system, const AGBNPFor
     i4YValues->upload(y_i4);
     i4Y2Values->upload(y2_i4);
 
+    gtree = new OpenCLOverlapTree;//instance of atomic overlap tree
+    gtreems = new OpenCLOverlapTree;//instance of MS particles overlap tree
+    
     gvol_force = &force;
     niterations = 0;
     hasInitializedKernels = false;
@@ -470,19 +574,24 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
 	num_compute_units = nb.getNumForceThreadBlocks();
       }
 
-      //figures out tree sizes, etc.
+      //creates overlap tree
       int pad_modulo = ov_work_group_size;
-      init_tree_size(pad_modulo, noverlaps);
-
-      if(verbose_level > 0) std::cout << "Tree size: " << total_tree_size << std::endl;
+      gtree->init_tree_size(cl.getNumAtoms(), cl.getPaddedNumAtoms(), num_compute_units, pad_modulo, noverlaps);
+      //allocates or re-allocates tree buffers 
+      gtree->resize_tree_buffers(cl, ov_work_group_size, hasExceededTempBuffer);
+      hasExceededTempBuffer = false;
+      //copy overlap tree buffers to device
+      gtree->copy_tree_to_device();
+      
+      if(verbose_level > 0) std::cout << "Tree size: " << gtree->total_tree_size << std::endl;
 
       if(verbose_level > 0){
-	for(int i = 0; i < num_sections; i++){
-	  cout << "Tn: " << i << " " << tree_size[i] << " " << padded_tree_size[i] << " " << natoms_in_tree[i] << " " << tree_pointer[i] << " " << first_atom[i] << endl;
+	for(int i = 0; i < gtree->num_sections; i++){
+	  cout << "Tn: " << i << " " << gtree->tree_size[i] << " " << gtree->padded_tree_size[i] << " " << gtree->natoms_in_tree[i] << " " << gtree->tree_pointer[i] << " " << gtree->first_atom[i] << endl;
 	}
 	if(verbose_level > 4){
-	  for(int i = 0; i < total_atoms_in_tree; i++){
-	    cout << "Atom: " << i << " Slot: " << atom_tree_pointer[i] << endl;
+	  for(int i = 0; i < gtree->total_atoms_in_tree; i++){
+	    cout << "Atom: " << i << " Slot: " << gtree->atom_tree_pointer[i] << endl;
 	  }
 	}
       }
@@ -491,15 +600,15 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
 	std::cout <<  "Num atoms: " << cl.getNumAtoms() << std::endl;
 	std::cout <<  "Padded Num Atoms: " << cl.getPaddedNumAtoms() << std::endl;
 	std::cout <<  "Num Atom Blocks: " << cl.getNumAtomBlocks() << std::endl;
-	std::cout <<  "Num Tree Sections: " << num_sections << std::endl;
+	std::cout <<  "Num Tree Sections: " << gtree->num_sections << std::endl;
 	std::cout <<  "Num Force Buffers: " << nb.getNumForceBuffers() << std::endl;	
 	std::cout <<  "Tile size: " << OpenCLContext::TileSize << std::endl;
 	std::cout <<  "getNumForceThreadBlocks: " << nb.getNumForceThreadBlocks() << std::endl;
 	std::cout <<  "getForceThreadBlockSize: " << nb.getForceThreadBlockSize() << std::endl;
 	std::cout <<  "numForceBuffers: " <<  nb.getNumForceBuffers() << std::endl;
-	std::cout <<  "Num Tree Sections: " << num_sections << std::endl;
+	std::cout <<  "Num Tree Sections: " << gtree->num_sections << std::endl;
 	std::cout <<  "Work Group Size: " << ov_work_group_size << std::endl;
-	std::cout <<  "Tree Size: " <<  total_tree_size << std::endl;
+	std::cout <<  "Tree Size: " <<  gtree->total_tree_size << std::endl;
 	
 
 	
@@ -516,66 +625,6 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
 
       //Sets up buffers
 
-      //atomic buffers
-      if(ovAtomTreePointer) delete ovAtomTreePointer;
-      ovAtomTreePointer = OpenCLArray::create<cl_int>(cl, cl.getPaddedNumAtoms(), "ovAtomTreePointer");
-
-      //tree section buffers
-      if(ovAtomTreeSize) delete ovAtomTreeSize;
-      ovAtomTreeSize = OpenCLArray::create<cl_int>(cl, num_sections, "ovAtomTreeSize");
-      if(NIterations) delete NIterations;
-      NIterations = OpenCLArray::create<cl_int>(cl, num_sections, "NIterations");
-      if(ovAtomTreePaddedSize) delete ovAtomTreePaddedSize;
-      ovAtomTreePaddedSize = OpenCLArray::create<cl_int>(cl, num_sections, "ovAtomTreePaddedSize");
-      if(ovNumAtomsInTree) delete ovNumAtomsInTree;
-      ovNumAtomsInTree = OpenCLArray::create<cl_int>(cl, num_sections, "ovNumAtomsInTree");
-      if(ovTreePointer) delete ovTreePointer;
-      ovTreePointer = OpenCLArray::create<cl_int>(cl, num_sections, "ovTreePointer");
-      if(ovAtomTreeLock) delete ovAtomTreeLock;
-      ovAtomTreeLock = OpenCLArray::create<cl_int>(cl, num_sections, "ovAtomTreeLock");
-      if(ovFirstAtom) delete ovFirstAtom;
-      ovFirstAtom = OpenCLArray::create<cl_int>(cl, num_sections, "ovFirstAtom");
-
-      //tree buffers
-      if(ovLevel) delete ovLevel;
-      ovLevel = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovLevel");
-      if(ovG) delete ovG;
-      ovG = OpenCLArray::create<mm_float4>(cl, total_tree_size, "ovG"); //gaussian position + exponent
-      if(ovVolume) delete ovVolume;
-      ovVolume = OpenCLArray::create<cl_float>(cl, total_tree_size, "ovVolume");
-      if(ovVSfp) delete ovVSfp;
-      ovVSfp = OpenCLArray::create<cl_float>(cl, total_tree_size, "ovVSfp");
-      if(ovSelfVolume) delete ovSelfVolume;
-      ovSelfVolume = OpenCLArray::create<cl_float>(cl, total_tree_size, "ovSelfVolume");
-      if(ovVolEnergy) delete ovVolEnergy;
-      ovVolEnergy = OpenCLArray::create<cl_double>(cl, total_tree_size, "ovVolEnergy");
-      if(ovGamma1i) delete ovGamma1i;
-      ovGamma1i = OpenCLArray::create<cl_float>(cl, total_tree_size, "ovGamma1i");
-      if(ovDV1) delete ovDV1;
-      ovDV1 = OpenCLArray::create<mm_float4>(cl, total_tree_size, "ovDV1"); //dV12/dr1 + dV12/dV1 for each overlap
-      if(ovDV2) delete ovDV2;
-      ovDV2 = OpenCLArray::create<mm_float4>(cl, total_tree_size, "ovDV2"); //volume gradient accumulator
-      if(ovPF) delete ovPF;
-      ovPF = OpenCLArray::create<mm_float4>(cl, total_tree_size, "ovPF"); //(P) and (F) auxiliary variables
-      if(ovLastAtom) delete ovLastAtom;
-      ovLastAtom = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovLastAtom");
-      if(ovRootIndex) delete ovRootIndex;
-      ovRootIndex = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovRootIndex");
-      if(ovChildrenStartIndex) delete ovChildrenStartIndex;
-      ovChildrenStartIndex = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovChildrenStartIndex");
-      if(ovChildrenCount) delete ovChildrenCount;
-      ovChildrenCount = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovChildrenCount");
-      if(ovChildrenCountTop) delete ovChildrenCountTop;
-      ovChildrenCountTop = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovChildrenCountTop");
-      if(ovChildrenCountBottom) delete ovChildrenCountBottom;
-      ovChildrenCountBottom = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovChildrenCountBottom");
-      if(ovProcessedFlag) delete ovProcessedFlag;
-      ovProcessedFlag = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovProcessedFlag");
-      if(ovOKtoProcessFlag) delete ovOKtoProcessFlag;
-      ovOKtoProcessFlag = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovOKtoProcessFlag");
-      if(ovChildrenReported) delete ovChildrenReported;
-      ovChildrenReported = OpenCLArray::create<cl_int>(cl, total_tree_size, "ovChildrenReported");
-
       //sets up flag to detect when tree size is exceeded
       if(PanicButton) delete PanicButton;
       // pos 0 is general panic, pos 1 indicates execeeded temp buffer
@@ -583,29 +632,6 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       panic_button.resize(2);
       panic_button[0] = panic_button[1]  = 0;    //init with zero
       PanicButton->upload(panic_button);
-      
-      // atomic reduction buffers, one for each tree section
-      // used only if long int atomics are not available
-      //   ovAtomBuffer holds volume energy derivatives (in xyz)
-      if(ovAtomBuffer) delete ovAtomBuffer;
-      ovAtomBuffer = OpenCLArray::create<mm_float4>(cl, cl.getPaddedNumAtoms()*num_sections, "ovAtomBuffer");
-      if(selfVolumeBuffer) delete selfVolumeBuffer;
-      selfVolumeBuffer = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms()*num_sections, "selfVolumeBuffer");
-
-      // "long" version of  selfVolume accumulation buffer updated using atomics
-      if(selfVolumeBuffer_long) delete selfVolumeBuffer_long;
-      selfVolumeBuffer_long = OpenCLArray::create<cl_long>(cl, cl.getPaddedNumAtoms(), "selfVolumeBuffer_long");
-
-      //traditional and "long" versions of general accumulation buffers
-      if(!AccumulationBuffer1_real) delete AccumulationBuffer1_real;
-      AccumulationBuffer1_real = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms()*num_compute_units, "AccumulationBuffer1_real");
-      if(!AccumulationBuffer1_long) delete AccumulationBuffer1_long;
-      AccumulationBuffer1_long = OpenCLArray::create<cl_long>(cl, cl.getPaddedNumAtoms(), "AccumulationBuffer1_long");
-      if(!AccumulationBuffer2_real) delete AccumulationBuffer2_real;
-      AccumulationBuffer2_real = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms()*num_compute_units, "AccumulationBuffer2_real");
-      if(!AccumulationBuffer2_long) delete AccumulationBuffer2_long;
-      AccumulationBuffer2_long = OpenCLArray::create<cl_long>(cl, cl.getPaddedNumAtoms(), "AccumulationBuffer2_long");
-
 
       // atom-level properties
       if(selfVolume) delete selfVolume;
@@ -636,26 +662,6 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       GaussianVolume = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms(), "GaussianVolume");
       if(AtomicGamma) delete AtomicGamma;
       AtomicGamma = OpenCLArray::create<cl_float>(cl, cl.getPaddedNumAtoms(), "AtomicGamma");
-
-      //temp buffers to cache intermediate data in overlap tree construction (3-body and up)
-      if(!hasExceededTempBuffer) {//first time or panic for other reasons
-	int smax = 64; // this is n*(n-1)/2 where n is the max number of neighbors per overlap
-	temp_buffer_size = ov_work_group_size*num_sections*smax;//first time
-      }else{
-	temp_buffer_size = 2*temp_buffer_size;
-	hasExceededTempBuffer = false;
-      }
-      if(gvol_buffer_temp) delete gvol_buffer_temp;
-      gvol_buffer_temp = OpenCLArray::create<cl_float>(cl, temp_buffer_size, "gvol_buffer_temp");
-      if(tree_pos_buffer_temp) delete tree_pos_buffer_temp;
-      tree_pos_buffer_temp = OpenCLArray::create<cl_uint>(cl, temp_buffer_size, "tree_pos_buffer_temp");
-      if(i_buffer_temp) delete i_buffer_temp;
-      i_buffer_temp = OpenCLArray::create<cl_int>(cl, temp_buffer_size, "i_buffer_temp");
-      if(atomj_buffer_temp) delete atomj_buffer_temp;
-      atomj_buffer_temp = OpenCLArray::create<cl_int>(cl, temp_buffer_size, "atomj_buffer_temp");
-
-      //now copy overlap tree arrays to device
-      OpenCLCalcAGBNPForceKernel::copy_tree_to_device();
     }
 
     {
@@ -663,9 +669,9 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       map<string, string> defines;
       defines["FORCE_WORK_GROUP_SIZE"] = cl.intToString(ov_work_group_size);
       defines["NUM_ATOMS"] = cl.intToString(cl.getNumAtoms());
-      defines["NUM_ATOMS_TREE"] = cl.intToString(total_atoms_in_tree);
+      defines["NUM_ATOMS_TREE"] = cl.intToString(gtree->total_atoms_in_tree);
       defines["PADDED_NUM_ATOMS"] = cl.intToString(cl.getPaddedNumAtoms());
-      defines["NUM_BLOCKS"] = cl.intToString(num_sections);
+      defines["NUM_BLOCKS"] = cl.intToString(gtree->num_sections);
       defines["TILE_SIZE"] = cl.intToString(OpenCLContext::TileSize);
       
       map<string, string> replacements;
@@ -685,27 +691,27 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       }
       kernel = resetTreeKernel;
       index = 0;
-      kernel.setArg<cl_int>(index++, num_sections);
-      kernel.setArg<cl::Buffer>(index++, ovTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePaddedSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovLevel->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVolume->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVSfp->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovSelfVolume->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVolEnergy->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovLastAtom->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovRootIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenStartIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovDV1->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovDV2->getDeviceBuffer());
+      kernel.setArg<cl_int>(index++, gtree->num_sections);
+      kernel.setArg<cl::Buffer>(index++, gtree->ovTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreeSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePaddedSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovLevel->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovVolume->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovVSfp->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovSelfVolume->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovVolEnergy->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovLastAtom->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovRootIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenStartIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenCount->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovDV1->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovDV2->getDeviceBuffer());
 
-      kernel.setArg<cl::Buffer>(index++, ovProcessedFlag->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovOKtoProcessFlag->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenReported->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeLock->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovProcessedFlag->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovOKtoProcessFlag->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenReported->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreeLock->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, ishydrogenParam->getDeviceBuffer());
 
       //reset buffer kernel
@@ -719,10 +725,10 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       if(verbose) cout << "setting arguments for kernel " << kernel_name << " ... " << endl;
       kernel = resetBufferKernel;
       kernel.setArg<cl_int>(index++, cl.getPaddedNumAtoms());
-      kernel.setArg<cl_int>(index++, num_sections);
-      kernel.setArg<cl::Buffer>(index++, ovAtomBuffer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, selfVolumeBuffer->getDeviceBuffer());
-      if(useLong) kernel.setArg<cl::Buffer>(index++, selfVolumeBuffer_long->getDeviceBuffer());
+      kernel.setArg<cl_int>(index++, gtree->num_sections);
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomBuffer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->selfVolumeBuffer->getDeviceBuffer());
+      if(useLong) kernel.setArg<cl::Buffer>(index++, gtree->selfVolumeBuffer_long->getDeviceBuffer());
 
       
       //reset tree counters kernel
@@ -735,16 +741,16 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       index = 0;
       kernel = resetSelfVolumesKernel;
       if(verbose) cout << "setting arguments for kernel " << kernel_name << " ... " << endl;
-      kernel.setArg<cl_int>(index++, num_sections);
-      kernel.setArg<cl::Buffer>(index++, ovTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePaddedSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenStartIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovProcessedFlag->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovOKtoProcessFlag->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenReported->getDeviceBuffer());
+      kernel.setArg<cl_int>(index++, gtree->num_sections);
+      kernel.setArg<cl::Buffer>(index++, gtree->ovTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreeSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePaddedSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenStartIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenCount->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovProcessedFlag->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovOKtoProcessFlag->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenReported->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, PanicButton->getDeviceBuffer());
     }
 
@@ -760,7 +766,7 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       map<string, string> pairValueDefines;
       pairValueDefines["FORCE_WORK_GROUP_SIZE"] = cl.intToString(ov_work_group_size);
       pairValueDefines["NUM_ATOMS"] = cl.intToString(cl.getNumAtoms());
-      pairValueDefines["NUM_ATOMS_TREE"] = cl.intToString(total_atoms_in_tree);
+      pairValueDefines["NUM_ATOMS_TREE"] = cl.intToString(gtree->total_atoms_in_tree);
       pairValueDefines["PADDED_NUM_ATOMS"] = cl.intToString(cl.getPaddedNumAtoms());
       pairValueDefines["NUM_BLOCKS"] = cl.intToString(cl.getNumAtomBlocks());
       pairValueDefines["TILE_SIZE"] = cl.intToString(OpenCLContext::TileSize);
@@ -1058,15 +1064,15 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel = InitOverlapTreeKernel_1body_1;
       if(verbose) cout << "setting arugments for kernel" << kernel_name << " ... " << endl;
       kernel.setArg<cl_int>(index++, cl.getPaddedNumAtoms());
-      kernel.setArg<cl_int>(index++, num_sections);
+      kernel.setArg<cl_int>(index++, gtree->num_sections);
       kernel.setArg<cl_int>(index++, reset_tree_size);
-      kernel.setArg<cl::Buffer>(index++, ovTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovNumAtomsInTree->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovFirstAtom->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, NIterations->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePaddedSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovNumAtomsInTree->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovFirstAtom->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreeSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->NIterations->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePaddedSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePointer->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, cl.getPosq().getDeviceBuffer() );
       kernel.setArg<cl::Buffer>(index++, radiusParam1->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, gammaParam1->getDeviceBuffer() );
@@ -1074,16 +1080,16 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++, GaussianExponent->getDeviceBuffer() );
       kernel.setArg<cl::Buffer>(index++, GaussianVolume->getDeviceBuffer() );
       kernel.setArg<cl::Buffer>(index++, AtomicGamma->getDeviceBuffer() );
-      kernel.setArg<cl::Buffer>(index++, ovLevel->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVolume->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVSfp->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovGamma1i->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovG->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovDV1->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovLastAtom->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovRootIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenStartIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovLevel->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovVolume->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovVSfp->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovGamma1i->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovG->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovDV1->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovLastAtom->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovRootIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenStartIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenCount->getDeviceBuffer());
 
       if(!hasCreatedKernels){
 	if(verbose) cout << "compiling " << kernel_name << " ... ";
@@ -1095,15 +1101,15 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       index = 0;
       kernel = InitOverlapTreeKernel_1body_2;
       kernel.setArg<cl_int>(index++, cl.getPaddedNumAtoms());
-      kernel.setArg<cl_int>(index++, num_sections);
+      kernel.setArg<cl_int>(index++, gtree->num_sections);
       kernel.setArg<cl_int>(index++, reset_tree_size);
-      kernel.setArg<cl::Buffer>(index++, ovTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovNumAtomsInTree->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovFirstAtom->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, NIterations->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePaddedSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovNumAtomsInTree->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovFirstAtom->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreeSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->NIterations->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePaddedSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePointer->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, cl.getPosq().getDeviceBuffer() );
       kernel.setArg<cl::Buffer>(index++, radiusParam2->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, gammaParam2->getDeviceBuffer() );
@@ -1111,16 +1117,16 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++, GaussianExponent->getDeviceBuffer() );
       kernel.setArg<cl::Buffer>(index++, GaussianVolume->getDeviceBuffer() );
       kernel.setArg<cl::Buffer>(index++, AtomicGamma->getDeviceBuffer() );
-      kernel.setArg<cl::Buffer>(index++, ovLevel->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVolume->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVSfp->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovGamma1i->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovG->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovDV1->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovLastAtom->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovRootIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenStartIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovLevel->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovVolume->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovVSfp->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovGamma1i->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovG->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovDV1->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovLastAtom->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovRootIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenStartIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenCount->getDeviceBuffer());
 
       bool deviceIsCpu = (cl.getDevice().getInfo<CL_DEVICE_TYPE>() == CL_DEVICE_TYPE_CPU);
       if(deviceIsCpu){
@@ -1137,7 +1143,7 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       }
       index = 0;
       kernel = InitOverlapTreeCountKernel;
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePointer->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, cl.getPosq().getDeviceBuffer() );
       kernel.setArg<cl::Buffer>(index++, GaussianExponent->getDeviceBuffer() );
       kernel.setArg<cl::Buffer>(index++, GaussianVolume->getDeviceBuffer() );
@@ -1152,7 +1158,7 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       }else{
 	kernel.setArg<cl_uint>(index++, cl.getNumAtomBlocks()*(cl.getNumAtomBlocks()+1)/2);
       }
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenCount->getDeviceBuffer());
 
       if(!hasCreatedKernels){
 	kernel_name = "reduceovCountBuffer";
@@ -1163,15 +1169,15 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       }
       index = 0;
       kernel = reduceovCountBufferKernel;
-      kernel.setArg<cl_int>(index++, num_sections);
-      kernel.setArg<cl::Buffer>(index++, ovTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePaddedSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenStartIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCountTop->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCountBottom->getDeviceBuffer());
+      kernel.setArg<cl_int>(index++, gtree->num_sections);
+      kernel.setArg<cl::Buffer>(index++, gtree->ovTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreeSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePaddedSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenStartIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenCount->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenCountTop->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenCountBottom->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, PanicButton->getDeviceBuffer());
       
       if(!hasCreatedKernels){
@@ -1187,9 +1193,9 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       }
       index = 0;
       kernel = InitOverlapTreeKernel;
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePaddedSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreeSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePaddedSize->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, cl.getPosq().getDeviceBuffer() );
       kernel.setArg<cl::Buffer>(index++, GaussianExponent->getDeviceBuffer() );
       kernel.setArg<cl::Buffer>(index++, GaussianVolume->getDeviceBuffer() );
@@ -1204,18 +1210,18 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       }else{
 	kernel.setArg<cl_uint>(index++, cl.getNumAtomBlocks()*(cl.getNumAtomBlocks()+1)/2);
       }
-      kernel.setArg<cl::Buffer>(index++, ovLevel->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVolume->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVSfp->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovGamma1i->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovG->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovDV1->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovLastAtom->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovRootIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenStartIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCountTop->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCountBottom->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovLevel->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovVolume->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovVSfp->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovGamma1i->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovG->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovDV1->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovLastAtom->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovRootIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenStartIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenCount->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenCountTop->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenCountBottom->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, PanicButton->getDeviceBuffer());
       
       if(!hasCreatedKernels){
@@ -1227,12 +1233,12 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       }
       index = 0;
       kernel = resetComputeOverlapTreeKernel;
-      kernel.setArg<cl_int>(index++, num_sections);
-      kernel.setArg<cl::Buffer>(index++, ovTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovProcessedFlag->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovOKtoProcessFlag->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovLevel->getDeviceBuffer());
+      kernel.setArg<cl_int>(index++, gtree->num_sections);
+      kernel.setArg<cl::Buffer>(index++, gtree->ovTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovProcessedFlag->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovOKtoProcessFlag->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreeSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovLevel->getDeviceBuffer());
       
       //pass 2 (1 pass kernel)
       if(!hasCreatedKernels){
@@ -1244,37 +1250,37 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       }
       index = 0;
       kernel = ComputeOverlapTree_1passKernel;
-      kernel.setArg<cl_int>(index++, num_sections);
-      kernel.setArg<cl::Buffer>(index++, ovTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, NIterations->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePaddedSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeLock->getDeviceBuffer());
+      kernel.setArg<cl_int>(index++, gtree->num_sections);
+      kernel.setArg<cl::Buffer>(index++, gtree->ovTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreeSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->NIterations->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePaddedSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreeLock->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, cl.getPosq().getDeviceBuffer() );
       kernel.setArg<cl::Buffer>(index++, GaussianExponent->getDeviceBuffer() );
       kernel.setArg<cl::Buffer>(index++, GaussianVolume->getDeviceBuffer() );
       kernel.setArg<cl::Buffer>(index++, AtomicGamma->getDeviceBuffer() );
-      kernel.setArg<cl::Buffer>(index++, ovLevel->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVolume->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVSfp->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovGamma1i->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovG->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovDV1->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovLastAtom->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovRootIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenStartIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovProcessedFlag->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovOKtoProcessFlag->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenReported->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCountTop->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCountBottom->getDeviceBuffer());
-      kernel.setArg<cl_int>(index++, temp_buffer_size );
-      kernel.setArg<cl::Buffer>(index++,  gvol_buffer_temp->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++,  tree_pos_buffer_temp->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++,  i_buffer_temp->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++,  atomj_buffer_temp->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovLevel->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovVolume->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovVSfp->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovGamma1i->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovG->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovDV1->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovLastAtom->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovRootIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenStartIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenCount->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovProcessedFlag->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovOKtoProcessFlag->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenReported->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenCountTop->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenCountBottom->getDeviceBuffer());
+      kernel.setArg<cl_int>(index++, gtree->temp_buffer_size );
+      kernel.setArg<cl::Buffer>(index++,  gtree->gvol_buffer_temp->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++,  gtree->tree_pos_buffer_temp->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++,  gtree->i_buffer_temp->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++,  gtree->atomj_buffer_temp->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++,  PanicButton->getDeviceBuffer());
 
 
@@ -1288,19 +1294,19 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       }
       index = 0;
       kernel = SortOverlapTree2bodyKernel;
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePaddedSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovLevel->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVolume->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVSfp->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovGamma1i->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovG->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovDV1->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovLastAtom->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovRootIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenStartIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreeSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePaddedSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovLevel->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovVolume->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovVSfp->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovGamma1i->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovG->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovDV1->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovLastAtom->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovRootIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenStartIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenCount->getDeviceBuffer());
 
       //rescan kernels
       if(!hasCreatedKernels){
@@ -1312,13 +1318,13 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       }
       index = 0;
       kernel = ResetRescanOverlapTreeKernel;
-      kernel.setArg<cl_int>(index++, num_sections);
-      kernel.setArg<cl::Buffer>(index++, ovTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePaddedSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovProcessedFlag->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovOKtoProcessFlag->getDeviceBuffer());
+      kernel.setArg<cl_int>(index++, gtree->num_sections);
+      kernel.setArg<cl::Buffer>(index++, gtree->ovTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreeSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePaddedSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovProcessedFlag->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovOKtoProcessFlag->getDeviceBuffer());
 
       if(!hasCreatedKernels){
 	kernel_name = "InitRescanOverlapTree";
@@ -1329,12 +1335,12 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       }
       index = 0;
       kernel = InitRescanOverlapTreeKernel;
-      kernel.setArg<cl_int>(index++, num_sections);
-      kernel.setArg<cl::Buffer>(index++, ovTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovProcessedFlag->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovOKtoProcessFlag->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovLevel->getDeviceBuffer());
+      kernel.setArg<cl_int>(index++, gtree->num_sections);
+      kernel.setArg<cl::Buffer>(index++, gtree->ovTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreeSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovProcessedFlag->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovOKtoProcessFlag->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovLevel->getDeviceBuffer());
 
       //propagates atomic parameters (radii, gammas, etc) from the top to the bottom
       //of the overlap tree, recomputes overlap volumes as it goes
@@ -1347,30 +1353,30 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       }
       index = 0;
       kernel = RescanOverlapTreeKernel;
-      kernel.setArg<cl_int>(index++, num_sections);
-      kernel.setArg<cl::Buffer>(index++, ovTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, NIterations->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePaddedSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeLock->getDeviceBuffer());
+      kernel.setArg<cl_int>(index++, gtree->num_sections);
+      kernel.setArg<cl::Buffer>(index++, gtree->ovTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreeSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->NIterations->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePaddedSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreeLock->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, cl.getPosq().getDeviceBuffer() );
       kernel.setArg<cl::Buffer>(index++, GaussianExponent->getDeviceBuffer() );
       kernel.setArg<cl::Buffer>(index++, GaussianVolume->getDeviceBuffer() );
       kernel.setArg<cl::Buffer>(index++, AtomicGamma->getDeviceBuffer() );
-      kernel.setArg<cl::Buffer>(index++, ovLevel->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVolume->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVSfp->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovGamma1i->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovG->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovDV1->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovLastAtom->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovRootIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenStartIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovProcessedFlag->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovOKtoProcessFlag->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenReported->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovLevel->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovVolume->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovVSfp->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovGamma1i->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovG->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovDV1->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovLastAtom->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovRootIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenStartIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenCount->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovProcessedFlag->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovOKtoProcessFlag->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenReported->getDeviceBuffer());
 
 
       //seeds tree with van der Waals + GB gamma parameters
@@ -1383,15 +1389,15 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       index = 0;
       kernel = InitOverlapTreeGammasKernel_1body_W;
       kernel.setArg<cl_int>(index++, cl.getPaddedNumAtoms());
-      kernel.setArg<cl_int>(index++, num_sections);
-      kernel.setArg<cl::Buffer>(index++, ovTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovNumAtomsInTree->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovFirstAtom->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, NIterations->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
+      kernel.setArg<cl_int>(index++, gtree->num_sections);
+      kernel.setArg<cl::Buffer>(index++, gtree->ovTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovNumAtomsInTree->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovFirstAtom->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreeSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->NIterations->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePointer->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, VdWDerW->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovGamma1i->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovGamma1i->getDeviceBuffer());
 
       //Same as RescanOverlapTree above:
       //propagates van der Waals + GB gamma atomic parameters from the top to the bottom
@@ -1407,23 +1413,23 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       }
       index = 0;
       kernel = RescanOverlapTreeGammasKernel_W;
-      kernel.setArg<cl_int>(index++, num_sections);
-      kernel.setArg<cl::Buffer>(index++, ovTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, NIterations->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePaddedSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeLock->getDeviceBuffer());
+      kernel.setArg<cl_int>(index++, gtree->num_sections);
+      kernel.setArg<cl::Buffer>(index++, gtree->ovTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreeSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->NIterations->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePaddedSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreeLock->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, VdWDerW->getDeviceBuffer() );
-      kernel.setArg<cl::Buffer>(index++, ovLevel->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovGamma1i->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovLastAtom->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovRootIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenStartIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovProcessedFlag->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovOKtoProcessFlag->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenReported->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovLevel->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovGamma1i->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovLastAtom->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovRootIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenStartIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenCount->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovProcessedFlag->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovOKtoProcessFlag->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenReported->getDeviceBuffer());
 
     }
 
@@ -1432,7 +1438,7 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       //Self volumes kernel
       map<string, string> defines;
       defines["FORCE_WORK_GROUP_SIZE"] = cl.intToString(ov_work_group_size);
-      defines["NUM_ATOMS_TREE"] = cl.intToString(total_atoms_in_tree);
+      defines["NUM_ATOMS_TREE"] = cl.intToString(gtree->total_atoms_in_tree);
       defines["NUM_ATOMS"] = cl.intToString(cl.getNumAtoms());
       defines["PADDED_NUM_ATOMS"] = cl.intToString(cl.getPaddedNumAtoms());
       defines["NUM_BLOCKS"] = cl.intToString(cl.getNumAtomBlocks());
@@ -1460,39 +1466,39 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel = computeSelfVolumesKernel;
       if(verbose) cout << "setting arguments for kernel" << kernel_name << " ... " << endl;
       int index = 0;
-      kernel.setArg<cl_int>(index++, num_sections);
-      kernel.setArg<cl::Buffer>(index++, ovTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, NIterations->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePaddedSize->getDeviceBuffer());
+      kernel.setArg<cl_int>(index++, gtree->num_sections);
+      kernel.setArg<cl::Buffer>(index++, gtree->ovTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreeSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->NIterations->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePaddedSize->getDeviceBuffer());
 
       kernel.setArg<cl::Buffer>(index++, GaussianExponent->getDeviceBuffer() );
 
-      kernel.setArg<cl::Buffer>(index++, ovLevel->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVolume->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVSfp->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovGamma1i->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovG->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovSelfVolume->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVolEnergy->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovDV1->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovDV2->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovPF->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovLevel->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovVolume->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovVSfp->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovGamma1i->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovG->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovSelfVolume->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovVolEnergy->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovDV1->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovDV2->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovPF->getDeviceBuffer());
 
-      kernel.setArg<cl::Buffer>(index++, ovLastAtom->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovRootIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenStartIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovProcessedFlag->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovOKtoProcessFlag->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenReported->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomBuffer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovLastAtom->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovRootIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenStartIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenCount->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovProcessedFlag->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovOKtoProcessFlag->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenReported->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomBuffer->getDeviceBuffer());
       if(useLong){
 	kernel.setArg<cl::Buffer>(index++, cl.getLongForceBuffer().getDeviceBuffer());
-	kernel.setArg<cl::Buffer>(index++, selfVolumeBuffer_long->getDeviceBuffer());
+	kernel.setArg<cl::Buffer>(index++, gtree->selfVolumeBuffer_long->getDeviceBuffer());
       }
-      kernel.setArg<cl::Buffer>(index++, selfVolumeBuffer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->selfVolumeBuffer->getDeviceBuffer());
 
       
       //same as above but w/o updating self volumes
@@ -1504,33 +1510,33 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       }
       kernel = computeVolumeEnergyKernel;
       index = 0;
-      kernel.setArg<cl_int>(index++, num_sections);
-      kernel.setArg<cl::Buffer>(index++, ovTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreeSize->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, NIterations->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePaddedSize->getDeviceBuffer());
+      kernel.setArg<cl_int>(index++, gtree->num_sections);
+      kernel.setArg<cl::Buffer>(index++, gtree->ovTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreeSize->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->NIterations->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePaddedSize->getDeviceBuffer());
 
       kernel.setArg<cl::Buffer>(index++, GaussianExponent->getDeviceBuffer() );
 
-      kernel.setArg<cl::Buffer>(index++, ovLevel->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVolume->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVSfp->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovGamma1i->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovG->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVolEnergy->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovDV1->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovDV2->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovPF->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovLevel->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovVolume->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovVSfp->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovGamma1i->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovG->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovVolEnergy->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovDV1->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovDV2->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovPF->getDeviceBuffer());
 
-      kernel.setArg<cl::Buffer>(index++, ovLastAtom->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovRootIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenStartIndex->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenCount->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovProcessedFlag->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovOKtoProcessFlag->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovChildrenReported->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomBuffer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovLastAtom->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovRootIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenStartIndex->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenCount->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovProcessedFlag->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovOKtoProcessFlag->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovChildrenReported->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomBuffer->getDeviceBuffer());
       if(useLong){
 	kernel.setArg<cl::Buffer>(index++, cl.getLongForceBuffer().getDeviceBuffer());
       }
@@ -1541,7 +1547,7 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       //Self volumes reduction kernel (pass 2)
       map<string, string> defines;
       defines["FORCE_WORK_GROUP_SIZE"] = cl.intToString(ov_work_group_size);
-      defines["NUM_ATOMS_TREE"] = cl.intToString(total_atoms_in_tree);
+      defines["NUM_ATOMS_TREE"] = cl.intToString(gtree->total_atoms_in_tree);
       defines["NUM_ATOMS"] = cl.intToString(cl.getNumAtoms());
       defines["PADDED_NUM_ATOMS"] = cl.intToString(cl.getPaddedNumAtoms());
       defines["NUM_BLOCKS"] = cl.intToString(cl.getNumAtomBlocks());
@@ -1566,12 +1572,12 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       cl::Kernel kernel = reduceSelfVolumesKernel_buffer;
       int index = 0;
       kernel.setArg<cl_int>(index++, cl.getPaddedNumAtoms());
-      kernel.setArg<cl_int>(index++, num_sections);
-      kernel.setArg<cl::Buffer>(index++, ovAtomTreePointer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovAtomBuffer->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, ovVolEnergy->getDeviceBuffer());
-      if(useLong) kernel.setArg<cl::Buffer>(index++, selfVolumeBuffer_long->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, selfVolumeBuffer->getDeviceBuffer());
+      kernel.setArg<cl_int>(index++, gtree->num_sections);
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomTreePointer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovAtomBuffer->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->ovVolEnergy->getDeviceBuffer());
+      if(useLong) kernel.setArg<cl::Buffer>(index++, gtree->selfVolumeBuffer_long->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->selfVolumeBuffer->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, selfVolume->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, AtomicGamma->getDeviceBuffer());
       int update_energy = 1;
@@ -1585,7 +1591,6 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       map<string, string> defines;
       defines["NUM_ATOMS"] = cl.intToString(cl.getNumAtoms());
       defines["PADDED_NUM_ATOMS"] = cl.intToString(cl.getPaddedNumAtoms());
-      defines["AGBNP_RADIUS_INCREMENT"] = cl.doubleToString(roffset);
       defines["AGBNP_HB_RADIUS"] = cl.doubleToString(AGBNP_HB_RADIUS);
       defines["AGBNP_RADIUS_PRECISION"] = cl.intToString(AGBNP_RADIUS_PRECISION) + "u";
       defines["TILE_SIZE"] = cl.intToString(OpenCLContext::TileSize);
@@ -1659,8 +1664,8 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel = initBornRadiiKernel;
       kernel.setArg<cl_uint>(index++, cl.getPaddedNumAtoms()); //bufferSize
       kernel.setArg<cl_uint>(index++, num_compute_units);     //numBuffers
-      if(useLong) kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_long->getDeviceBuffer()); //invBornRadiusBuffer_long
-      kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_real->getDeviceBuffer()); //invBornRadiusBuffer
+      if(useLong) kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer1_long->getDeviceBuffer()); //invBornRadiusBuffer_long
+      kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer1_real->getDeviceBuffer()); //invBornRadiusBuffer
       kernel.setArg<cl::Buffer>(index++, radiusParam2->getDeviceBuffer()); //van der Waals radii
       kernel.setArg<cl::Buffer>(index++, selfVolume->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, volScalingFactor->getDeviceBuffer());
@@ -1706,8 +1711,8 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++, i4YValues->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, i4Y2Values->getDeviceBuffer());
       //accumulation buffers for inverse Born radii
-      if(useLong) kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_long->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_real->getDeviceBuffer());
+      if(useLong) kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer1_long->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer1_real->getDeviceBuffer());
 
       if(!hasCreatedKernels){
 	kernel_name = "reduceBornRadii";
@@ -1720,8 +1725,8 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel = reduceBornRadiiKernel;
       kernel.setArg<cl_uint>(index++, cl.getPaddedNumAtoms()); //bufferSize
       kernel.setArg<cl_uint>(index++, num_compute_units);     //numBuffers
-      if(useLong) kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_long->getDeviceBuffer()); //invBornRadiusBuffer_long
-      kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_real->getDeviceBuffer()); //invBornRadiusBuffer
+      if(useLong) kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer1_long->getDeviceBuffer()); //invBornRadiusBuffer_long
+      kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer1_real->getDeviceBuffer()); //invBornRadiusBuffer
       kernel.setArg<cl::Buffer>(index++, radiusParam2->getDeviceBuffer()); //van der Waals radii
       kernel.setArg<cl::Buffer>(index++, invBornRadius->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, invBornRadius_fp->getDeviceBuffer()); //derivative of filter function
@@ -1754,10 +1759,10 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel = initVdWGBDerBornKernel;
       kernel.setArg<cl_uint>(index++, cl.getPaddedNumAtoms()); //bufferSize
       kernel.setArg<cl_uint>(index++, num_compute_units);     //numBuffers
-      if(useLong) kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_long->getDeviceBuffer()); //VdWDerWBuffer_long
-      kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_real->getDeviceBuffer()); //VdWDerWBuffer
-      if(useLong) kernel.setArg<cl::Buffer>(index++, AccumulationBuffer2_long->getDeviceBuffer()); //GBDerUBuffer_long
-      kernel.setArg<cl::Buffer>(index++, AccumulationBuffer2_real->getDeviceBuffer()); //GBDerUBuffer
+      if(useLong) kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer1_long->getDeviceBuffer()); //VdWDerWBuffer_long
+      kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer1_real->getDeviceBuffer()); //VdWDerWBuffer
+      if(useLong) kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer2_long->getDeviceBuffer()); //GBDerUBuffer_long
+      kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer2_real->getDeviceBuffer()); //GBDerUBuffer
 
       
       //components of the derivatives of the van der Waals and GB energy functions due
@@ -1804,10 +1809,10 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel.setArg<cl::Buffer>(index++, VdWDerBrW->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, GBDerBrU->getDeviceBuffer());
       //accumulation buffers for U and W variables for volume component of the derivatives of the GB and vdw energy functions
-      if(useLong) kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_long->getDeviceBuffer()); //VdWDerWBuffer_long
-      kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_real->getDeviceBuffer()); //VdWDerWBuffer_long
-      if(useLong) kernel.setArg<cl::Buffer>(index++, AccumulationBuffer2_long->getDeviceBuffer()); //GBDerUBuffer_long
-      kernel.setArg<cl::Buffer>(index++, AccumulationBuffer2_real->getDeviceBuffer()); //GBDerUBuffer
+      if(useLong) kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer1_long->getDeviceBuffer()); //VdWDerWBuffer_long
+      kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer1_real->getDeviceBuffer()); //VdWDerWBuffer_long
+      if(useLong) kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer2_long->getDeviceBuffer()); //GBDerUBuffer_long
+      kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer2_real->getDeviceBuffer()); //GBDerUBuffer
       kernel.setArg<cl::Buffer>(index++, (useLong ? cl.getLongForceBuffer().getDeviceBuffer() : cl.getForceBuffers().getDeviceBuffer())); //master force buffer      
      
 
@@ -1822,10 +1827,10 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel = reduceVdWGBDerBornKernel;
       kernel.setArg<cl_uint>(index++, cl.getPaddedNumAtoms()); //bufferSize
       kernel.setArg<cl_uint>(index++, num_compute_units);     //numBuffers
-      if(useLong) kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_long->getDeviceBuffer()); //VdWDerWBuffer
-      kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_real->getDeviceBuffer()); 
-      if(useLong) kernel.setArg<cl::Buffer>(index++, AccumulationBuffer2_long->getDeviceBuffer()); //GBDerUBuffer
-      kernel.setArg<cl::Buffer>(index++, AccumulationBuffer2_real->getDeviceBuffer());
+      if(useLong) kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer1_long->getDeviceBuffer()); //VdWDerWBuffer
+      kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer1_real->getDeviceBuffer()); 
+      if(useLong) kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer2_long->getDeviceBuffer()); //GBDerUBuffer
+      kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer2_real->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, radiusParam2->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, VdWDerW->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, GBDerU->getDeviceBuffer());
@@ -1886,10 +1891,10 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel = initGBEnergyKernel;
       kernel.setArg<cl_uint>(index++, cl.getPaddedNumAtoms()); //bufferSize
       kernel.setArg<cl_uint>(index++, num_compute_units);     //numBuffers
-      if(useLong) kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_long->getDeviceBuffer()); //GB Energy buffer (long)
-      kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_real->getDeviceBuffer()); //GB energy buffer
-      if(useLong) kernel.setArg<cl::Buffer>(index++, AccumulationBuffer2_long->getDeviceBuffer()); //Y buffer (long)
-      kernel.setArg<cl::Buffer>(index++, AccumulationBuffer2_real->getDeviceBuffer()); //Y
+      if(useLong) kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer1_long->getDeviceBuffer()); //GB Energy buffer (long)
+      kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer1_real->getDeviceBuffer()); //GB energy buffer
+      if(useLong) kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer2_long->getDeviceBuffer()); //Y buffer (long)
+      kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer2_real->getDeviceBuffer()); //Y
       if(verbose) cout << " done. " << endl;
       
       //GBPairEnergy kernel
@@ -1920,11 +1925,11 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
 	kernel.setArg<cl_uint>(index++, cl.getNumAtomBlocks()*(cl.getNumAtomBlocks()+1)/2);
       }
       //accumulation buffers for GB Energy
-      if(useLong) kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_long->getDeviceBuffer());
-      kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_real->getDeviceBuffer());
+      if(useLong) kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer1_long->getDeviceBuffer());
+      kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer1_real->getDeviceBuffer());
       //accumulation buffers for "Y" parameters
-      if(useLong) kernel.setArg<cl::Buffer>(index++, AccumulationBuffer2_long->getDeviceBuffer()); //Y buffer (long)
-      kernel.setArg<cl::Buffer>(index++, AccumulationBuffer2_real->getDeviceBuffer()); //Y buffer
+      if(useLong) kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer2_long->getDeviceBuffer()); //Y buffer (long)
+      kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer2_real->getDeviceBuffer()); //Y buffer
       kernel.setArg<cl::Buffer>(index++, (useLong ? cl.getLongForceBuffer().getDeviceBuffer() : cl.getForceBuffers().getDeviceBuffer())); //master force buffer      
       if(verbose) cout << " done. " << endl;
 
@@ -1939,13 +1944,13 @@ void OpenCLCalcAGBNPForceKernel::executeInitKernels(ContextImpl& context, bool i
       kernel = reduceGBEnergyKernel;
       kernel.setArg<cl_uint>(index++, cl.getPaddedNumAtoms()); //bufferSize
       kernel.setArg<cl_uint>(index++, num_compute_units);     //numBuffers
-      if(useLong) kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_long->getDeviceBuffer()); //GB Energy buffer (long)
-      kernel.setArg<cl::Buffer>(index++, AccumulationBuffer1_real->getDeviceBuffer()); //GB Energy buffer
+      if(useLong) kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer1_long->getDeviceBuffer()); //GB Energy buffer (long)
+      kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer1_real->getDeviceBuffer()); //GB Energy buffer
       kernel.setArg<cl::Buffer>(index++, chargeParam->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, BornRadius->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, invBornRadius_fp->getDeviceBuffer());
-      if(useLong) kernel.setArg<cl::Buffer>(index++, AccumulationBuffer2_long->getDeviceBuffer()); //Y buffer (long)
-      kernel.setArg<cl::Buffer>(index++, AccumulationBuffer2_real->getDeviceBuffer()); //Y buffer
+      if(useLong) kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer2_long->getDeviceBuffer()); //Y buffer (long)
+      kernel.setArg<cl::Buffer>(index++, gtree->AccumulationBuffer2_real->getDeviceBuffer()); //Y buffer
       kernel.setArg<cl::Buffer>(index++, GBDerY->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, GBDerBrU->getDeviceBuffer());
       kernel.setArg<cl::Buffer>(index++, cl.getEnergyBuffer().getDeviceBuffer()); //master energy buffer
@@ -2007,52 +2012,52 @@ double OpenCLCalcAGBNPForceKernel::executeGVolSA(ContextImpl& context, bool incl
 
   if(verbose_level > 4){
     float self_volume = 0.0;
-    vector<cl_float> self_volumes(total_tree_size);
-    vector<cl_float> volumes(total_tree_size);
-    vector<cl_float> energies(total_tree_size);
-    vector<cl_float> gammas(total_tree_size);
-    vector<cl_int> last_atom(total_tree_size);
-    vector<cl_int> level(total_tree_size);
-    vector<cl_int> parent(total_tree_size);
-    vector<cl_int> children_start_index(total_tree_size);
-    vector<cl_int> children_count(total_tree_size);
-    vector<cl_int> children_reported(total_tree_size);
-    vector<mm_float4> g(total_tree_size);
-    vector<mm_float4> dv2(total_tree_size);
-    vector<mm_float4> dv1(total_tree_size);
-    vector<cl_float> sfp(total_tree_size);
-    vector<int> size(num_sections);
-    vector<int> tree_pointer_t(num_sections);
-    vector<cl_int> processed(total_tree_size);
-    vector<cl_int> oktoprocess(total_tree_size);
+    vector<cl_float> self_volumes(gtree->total_tree_size);
+    vector<cl_float> volumes(gtree->total_tree_size);
+    vector<cl_float> energies(gtree->total_tree_size);
+    vector<cl_float> gammas(gtree->total_tree_size);
+    vector<cl_int> last_atom(gtree->total_tree_size);
+    vector<cl_int> level(gtree->total_tree_size);
+    vector<cl_int> parent(gtree->total_tree_size);
+    vector<cl_int> children_start_index(gtree->total_tree_size);
+    vector<cl_int> children_count(gtree->total_tree_size);
+    vector<cl_int> children_reported(gtree->total_tree_size);
+    vector<mm_float4> g(gtree->total_tree_size);
+    vector<mm_float4> dv2(gtree->total_tree_size);
+    vector<mm_float4> dv1(gtree->total_tree_size);
+    vector<cl_float> sfp(gtree->total_tree_size);
+    vector<int> size(gtree->num_sections);
+    vector<int> tree_pointer_t(gtree->num_sections);
+    vector<cl_int> processed(gtree->total_tree_size);
+    vector<cl_int> oktoprocess(gtree->total_tree_size);
 
 
-    ovSelfVolume->download(self_volumes);
-    ovVolume->download(volumes);
-    ovVolEnergy->download(energies);
-    ovLevel->download(level);
-    ovLastAtom->download(last_atom);
-    ovRootIndex->download(parent);
-    ovChildrenStartIndex->download(children_start_index);
-    ovChildrenCount->download(children_count);
-    ovChildrenReported->download(children_reported);
-    ovG->download(g);
-    ovGamma1i->download(gammas);
-    ovDV1->download(dv1);
-    ovDV2->download(dv2);
-    ovVSfp->download(sfp);
-    ovAtomTreeSize->download(size);
-    ovTreePointer->download(tree_pointer_t);
-    ovProcessedFlag->download(processed);
-    ovOKtoProcessFlag->download(oktoprocess);
+    gtree->ovSelfVolume->download(self_volumes);
+    gtree->ovVolume->download(volumes);
+    gtree->ovVolEnergy->download(energies);
+    gtree->ovLevel->download(level);
+    gtree->ovLastAtom->download(last_atom);
+    gtree->ovRootIndex->download(parent);
+    gtree->ovChildrenStartIndex->download(children_start_index);
+    gtree->ovChildrenCount->download(children_count);
+    gtree->ovChildrenReported->download(children_reported);
+    gtree->ovG->download(g);
+    gtree->ovGamma1i->download(gammas);
+    gtree->ovDV1->download(dv1);
+    gtree->ovDV2->download(dv2);
+    gtree->ovVSfp->download(sfp);
+    gtree->ovAtomTreeSize->download(size);
+    gtree->ovTreePointer->download(tree_pointer_t);
+    gtree->ovProcessedFlag->download(processed);
+    gtree->ovOKtoProcessFlag->download(oktoprocess);
 
 
 
     std::cout << "Tree:" << std::endl;
-    for(int section = 0; section < num_sections; section++){
+    for(int section = 0; section < gtree->num_sections; section++){
       std::cout << "Tree for sections: " << section << " " << " size= " << size[section] << std::endl;
       int pp = tree_pointer_t[section];
-      int np = padded_tree_size[section];
+      int np = gtree->padded_tree_size[section];
       //self_volume += self_volumes[pp];
       std::cout << "slot level LastAtom parent ChStart ChCount SelfV V gamma Energy a x y z dedx dedy dedz sfp processed ok2process children_reported" << endl;
       for(int i = pp; i < pp + np ; i++){
@@ -2110,9 +2115,9 @@ double OpenCLCalcAGBNPForceKernel::executeGVolSA(ContextImpl& context, bool incl
     
     if(verbose){
       cout << "Tree sizes:" << endl;
-      vector<cl_int> size(num_sections);
-      ovAtomTreeSize->download(size);
-      for(int section=0;section < num_sections; section++){
+      vector<cl_int> size(gtree->num_sections);
+      gtree->ovAtomTreeSize->download(size);
+      for(int section=0;section < gtree->num_sections; section++){
 	cout << size[section] << " ";
       }
       cout << endl;
@@ -2132,17 +2137,17 @@ double OpenCLCalcAGBNPForceKernel::executeGVolSA(ContextImpl& context, bool incl
 
   
   if(false){
-    vector<int> size(num_sections);
-    vector<int> niter(num_sections);
-    ovAtomTreeSize->download(size);
+    vector<int> size(gtree->num_sections);
+    vector<int> niter(gtree->num_sections);
+    gtree->ovAtomTreeSize->download(size);
     cout << "Sizes: ";
-    for(int section = 0; section < num_sections; section++){
+    for(int section = 0; section < gtree->num_sections; section++){
       std::cout << size[section] << " ";
     }
     std::cout << endl;
-    NIterations->download(niter);
+    gtree->NIterations->download(niter);
     cout << "Niter: ";
-    for(int section = 0; section < num_sections; section++){
+    for(int section = 0; section < gtree->num_sections; section++){
       std::cout << niter[section] << " ";
     }
     std::cout << endl;
@@ -2153,9 +2158,9 @@ double OpenCLCalcAGBNPForceKernel::executeGVolSA(ContextImpl& context, bool incl
   
   if(verbose){
     vector<int> atom_pointer(cl.getPaddedNumAtoms());
-    vector<float> vol_energies(total_tree_size);
-    ovAtomTreePointer->download(atom_pointer);
-    ovVolEnergy->download(vol_energies);
+    vector<float> vol_energies(gtree->total_tree_size);
+    gtree->ovAtomTreePointer->download(atom_pointer);
+    gtree->ovVolEnergy->download(vol_energies);
     double energy = 0;
     for(int i=0;i<numParticles;i++){
       int slot = atom_pointer[i];
@@ -2212,9 +2217,9 @@ double OpenCLCalcAGBNPForceKernel::executeGVolSA(ContextImpl& context, bool incl
 
   if(verbose){
     vector<int> atom_pointer(cl.getPaddedNumAtoms());
-    vector<float> vol_energies(total_tree_size);
-    ovAtomTreePointer->download(atom_pointer);
-    ovVolEnergy->download(vol_energies);
+    vector<float> vol_energies(gtree->total_tree_size);
+    gtree->ovAtomTreePointer->download(atom_pointer);
+    gtree->ovVolEnergy->download(vol_energies);
     double energy = 0;
     for(int i=0;i<numParticles;i++){
       int slot = atom_pointer[i];
@@ -2340,9 +2345,9 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
     
     if(verbose){
       cout << "Tree sizes:" << endl;
-      vector<cl_int> size(num_sections);
-      ovAtomTreeSize->download(size);
-      for(int section=0;section < num_sections; section++){
+      vector<cl_int> size(gtree->num_sections);
+      gtree->ovAtomTreeSize->download(size);
+      for(int section=0;section < gtree->num_sections; section++){
 	cout << size[section] << " ";
       }
       cout << endl;
@@ -2362,17 +2367,17 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   
   
   if(false){
-    vector<int> size(num_sections);
-    vector<int> niter(num_sections);
-    ovAtomTreeSize->download(size);
+    vector<int> size(gtree->num_sections);
+    vector<int> niter(gtree->num_sections);
+    gtree->ovAtomTreeSize->download(size);
     cout << "Sizes: ";
-    for(int section = 0; section < num_sections; section++){
+    for(int section = 0; section < gtree->num_sections; section++){
       std::cout << size[section] << " ";
     }
     std::cout << endl;
-    NIterations->download(niter);
+    gtree->NIterations->download(niter);
     cout << "Niter: ";
-    for(int section = 0; section < num_sections; section++){
+    for(int section = 0; section < gtree->num_sections; section++){
       std::cout << niter[section] << " ";
     }
     std::cout << endl;
@@ -2387,11 +2392,11 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   
   if(verbose_level > 3){
     vector<int> atom_pointer(cl.getPaddedNumAtoms());
-    vector<double> vol_energies(total_tree_size);
-    ovAtomTreePointer->download(atom_pointer);
-    ovVolEnergy->download(vol_energies);
+    vector<double> vol_energies(gtree->total_tree_size);
+    gtree->ovAtomTreePointer->download(atom_pointer);
+    gtree->ovVolEnergy->download(vol_energies);
     double energy = 0;
-    for(int i=0;i<total_atoms_in_tree;i++){
+    for(int i=0;i<gtree->total_atoms_in_tree;i++){
       int slot = atom_pointer[i];
       energy += vol_energies[slot];
       cout << "EV1: " << i << "  " << vol_energies[slot] << endl;
@@ -2414,52 +2419,52 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
 
    if(verbose_level > 4){
     float self_volume = 0.0;
-    vector<cl_float> self_volumes(total_tree_size);
-    vector<cl_float> volumes(total_tree_size);
-    vector<cl_double> energies(total_tree_size);
-    vector<cl_float> gammas(total_tree_size);
-    vector<cl_int> last_atom(total_tree_size);
-    vector<cl_int> level(total_tree_size);
-    vector<cl_int> parent(total_tree_size);
-    vector<cl_int> children_start_index(total_tree_size);
-    vector<cl_int> children_count(total_tree_size);
-    vector<cl_int> children_reported(total_tree_size);
-    vector<mm_float4> g(total_tree_size);
-    vector<mm_float4> dv2(total_tree_size);
-    vector<mm_float4> dv1(total_tree_size);
-    vector<cl_float> sfp(total_tree_size);
-    vector<int> size(num_sections);
-    vector<int> tree_pointer_t(num_sections);
-    vector<cl_int> processed(total_tree_size);
-    vector<cl_int> oktoprocess(total_tree_size);
+    vector<cl_float> self_volumes(gtree->total_tree_size);
+    vector<cl_float> volumes(gtree->total_tree_size);
+    vector<cl_double> energies(gtree->total_tree_size);
+    vector<cl_float> gammas(gtree->total_tree_size);
+    vector<cl_int> last_atom(gtree->total_tree_size);
+    vector<cl_int> level(gtree->total_tree_size);
+    vector<cl_int> parent(gtree->total_tree_size);
+    vector<cl_int> children_start_index(gtree->total_tree_size);
+    vector<cl_int> children_count(gtree->total_tree_size);
+    vector<cl_int> children_reported(gtree->total_tree_size);
+    vector<mm_float4> g(gtree->total_tree_size);
+    vector<mm_float4> dv2(gtree->total_tree_size);
+    vector<mm_float4> dv1(gtree->total_tree_size);
+    vector<cl_float> sfp(gtree->total_tree_size);
+    vector<int> size(gtree->num_sections);
+    vector<int> tree_pointer_t(gtree->num_sections);
+    vector<cl_int> processed(gtree->total_tree_size);
+    vector<cl_int> oktoprocess(gtree->total_tree_size);
 
 
-    ovSelfVolume->download(self_volumes);
-    ovVolume->download(volumes);
-    ovVolEnergy->download(energies);
-    ovLevel->download(level);
-    ovLastAtom->download(last_atom);
-    ovRootIndex->download(parent);
-    ovChildrenStartIndex->download(children_start_index);
-    ovChildrenCount->download(children_count);
-    ovChildrenReported->download(children_reported);
-    ovG->download(g);
-    ovGamma1i->download(gammas);
-    ovDV1->download(dv1);
-    ovDV2->download(dv2);
-    ovVSfp->download(sfp);
-    ovAtomTreeSize->download(size);
-    ovTreePointer->download(tree_pointer_t);
-    ovProcessedFlag->download(processed);
-    ovOKtoProcessFlag->download(oktoprocess);
+    gtree->ovSelfVolume->download(self_volumes);
+    gtree->ovVolume->download(volumes);
+    gtree->ovVolEnergy->download(energies);
+    gtree->ovLevel->download(level);
+    gtree->ovLastAtom->download(last_atom);
+    gtree->ovRootIndex->download(parent);
+    gtree->ovChildrenStartIndex->download(children_start_index);
+    gtree->ovChildrenCount->download(children_count);
+    gtree->ovChildrenReported->download(children_reported);
+    gtree->ovG->download(g);
+    gtree->ovGamma1i->download(gammas);
+    gtree->ovDV1->download(dv1);
+    gtree->ovDV2->download(dv2);
+    gtree->ovVSfp->download(sfp);
+    gtree->ovAtomTreeSize->download(size);
+    gtree->ovTreePointer->download(tree_pointer_t);
+    gtree->ovProcessedFlag->download(processed);
+    gtree->ovOKtoProcessFlag->download(oktoprocess);
 
 
 
     std::cout << "Tree:" << std::endl;
-    for(int section = 0; section < num_sections; section++){
+    for(int section = 0; section < gtree->num_sections; section++){
       std::cout << "Tree for sections: " << section << " " << " size= " << size[section] << std::endl;
       int pp = tree_pointer_t[section];
-      int np = padded_tree_size[section];
+      int np = gtree->padded_tree_size[section];
       //self_volume += self_volumes[pp];
       std::cout << "slot level LastAtom parent ChStart ChCount SelfV V gamma Energy a x y z dedx dedy dedz sfp processed ok2process children_reported" << endl;
       for(int i = pp; i < pp + np ; i++){
@@ -2512,11 +2517,11 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
 
   if(verbose_level > 3){
     vector<int> atom_pointer(cl.getPaddedNumAtoms());
-    vector<double> vol_energies(total_tree_size);
-    ovAtomTreePointer->download(atom_pointer);
-    ovVolEnergy->download(vol_energies);
+    vector<double> vol_energies(gtree->total_tree_size);
+    gtree->ovAtomTreePointer->download(atom_pointer);
+    gtree->ovVolEnergy->download(vol_energies);
     double energy = 0;
-    for(int i=0;i<total_atoms_in_tree;i++){
+    for(int i=0;i<gtree->total_atoms_in_tree;i++){
       int slot = atom_pointer[i];
       energy += vol_energies[slot];
     }
@@ -2580,7 +2585,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
 
   if(verbose_level > 5 && !useLong){
     vector<float> inv_br_buffer(cl.getPaddedNumAtoms()*num_compute_units);
-    AccumulationBuffer1_real->download(inv_br_buffer);
+    gtree->AccumulationBuffer1_real->download(inv_br_buffer);
     for(int cu=0;cu<num_compute_units;cu++){
       for(int iatom = 0; iatom < cl.getPaddedNumAtoms(); iatom++){
 	cout << "BR_buff: " << cu << " " << iatom << " " << inv_br_buffer[cl.getPaddedNumAtoms()*cu + iatom] << endl;
@@ -2590,7 +2595,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
 
   if(verbose_level > 5 && useLong){
     vector<long> inv_br_buffer(cl.getPaddedNumAtoms());
-    AccumulationBuffer1_long->download(inv_br_buffer);
+    gtree->AccumulationBuffer1_long->download(inv_br_buffer);
     float scale = 1/(float) 0x100000000;
     for(int iatom = 0; iatom < cl.getPaddedNumAtoms(); iatom++){
       cout << "invBR_buff: " << iatom << " " << scale*inv_br_buffer[iatom] << endl;
@@ -2671,7 +2676,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   if(verbose_level > 5){
     // get the GB energy (sum over the atoms in the buffer)
     vector<float> gb_energies(cl.getPaddedNumAtoms()*num_compute_units);
-    AccumulationBuffer1_real->download(gb_energies);
+    gtree->AccumulationBuffer1_real->download(gb_energies);
     double gb_energy = 0.0;
     for(int i=0; i<numParticles; i++){
       cout << "EGB: " << i << " " << gb_energies[i] << endl;
@@ -2796,17 +2801,17 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
 
   //temp arrays
   if(false){
-    vector<cl_int> i_buffer(temp_buffer_size);
-    vector<cl_int> atomj_buffer(temp_buffer_size);
-    vector<cl_uint> tree_pos_buffer(temp_buffer_size);
-    vector<cl_float> gvol_buffer(temp_buffer_size);
+    vector<cl_int> i_buffer(gtree->temp_buffer_size);
+    vector<cl_int> atomj_buffer(gtree->temp_buffer_size);
+    vector<cl_uint> tree_pos_buffer(gtree->temp_buffer_size);
+    vector<cl_float> gvol_buffer(gtree->temp_buffer_size);
     int stride = ov_work_group_size*64;
-    i_buffer_temp->download(i_buffer);
-    atomj_buffer_temp->download(atomj_buffer);
-    tree_pos_buffer_temp->download(tree_pos_buffer);
-    gvol_buffer_temp->download(gvol_buffer);
+    gtree->i_buffer_temp->download(i_buffer);
+    gtree->atomj_buffer_temp->download(atomj_buffer);
+    gtree->tree_pos_buffer_temp->download(tree_pos_buffer);
+    gtree->gvol_buffer_temp->download(gvol_buffer);
     std::cout << "i_buffer   " << "atomj_buffer  " << "gvol   " << " fij  " <<  std::endl;
-    for(int sect = 0; sect < num_sections; sect++){
+    for(int sect = 0; sect < gtree->num_sections; sect++){
       int buffer_offset = stride*sect;
       for(int j = 0; j < 640 ; j++){
 	int i = j + buffer_offset;
@@ -2818,7 +2823,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool incl
   //gammas
   if(false){
     float mol_volume = 0.0;
-    vector<cl_float> gamma(num_sections);
+    vector<cl_float> gamma(gtree->num_sections);
     AtomicGamma->download(gamma);
     std::cout << "Gammas:" << std::endl;
     for(int iat = 0; iat < numParticles; iat++){
@@ -2969,9 +2974,9 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool incl
 
   if(verbose){
     vector<int> atom_pointer(cl.getPaddedNumAtoms());
-    vector<double> vol_energies(total_tree_size);
-    ovAtomTreePointer->download(atom_pointer);
-    ovVolEnergy->download(vol_energies);
+    vector<double> vol_energies(gtree->total_tree_size);
+    gtree->ovAtomTreePointer->download(atom_pointer);
+    gtree->ovVolEnergy->download(vol_energies);
     double energy = 0;
     for(int i=0;i<numParticles;i++){
       int slot = atom_pointer[i];
@@ -2982,48 +2987,48 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool incl
 
   if(verbose_level > 4){
     float self_volume = 0.0;
-    vector<cl_float> self_volumes(total_tree_size);
-    vector<cl_float> volumes(total_tree_size);
-    vector<cl_float> gammas(total_tree_size);
-    vector<cl_int> last_atom(total_tree_size);
-    vector<cl_int> level(total_tree_size);
-    vector<cl_int> parent(total_tree_size);
-    vector<cl_int> children_start_index(total_tree_size);
-    vector<cl_int> children_count(total_tree_size);
-    vector<cl_int> children_reported(total_tree_size);
-    vector<mm_float4> g(total_tree_size);
-    vector<mm_float4> dv2(total_tree_size);
-    vector<cl_float> sfp(total_tree_size);
-    vector<int> size(num_sections);
-    vector<int> tree_pointer_t(num_sections);
-    vector<cl_int> processed(total_tree_size);
-    vector<cl_int> oktoprocess(total_tree_size);
+    vector<cl_float> self_volumes(gtree->total_tree_size);
+    vector<cl_float> volumes(gtree->total_tree_size);
+    vector<cl_float> gammas(gtree->total_tree_size);
+    vector<cl_int> last_atom(gtree->total_tree_size);
+    vector<cl_int> level(gtree->total_tree_size);
+    vector<cl_int> parent(gtree->total_tree_size);
+    vector<cl_int> children_start_index(gtree->total_tree_size);
+    vector<cl_int> children_count(gtree->total_tree_size);
+    vector<cl_int> children_reported(gtree->total_tree_size);
+    vector<mm_float4> g(gtree->total_tree_size);
+    vector<mm_float4> dv2(gtree->total_tree_size);
+    vector<cl_float> sfp(gtree->total_tree_size);
+    vector<int> size(gtree->num_sections);
+    vector<int> tree_pointer_t(gtree->num_sections);
+    vector<cl_int> processed(gtree->total_tree_size);
+    vector<cl_int> oktoprocess(gtree->total_tree_size);
 
 
-    ovSelfVolume->download(self_volumes);
-    ovVolume->download(volumes);
-    ovLevel->download(level);
-    ovLastAtom->download(last_atom);
-    ovRootIndex->download(parent);
-    ovChildrenStartIndex->download(children_start_index);
-    ovChildrenCount->download(children_count);
-    ovChildrenReported->download(children_reported);
-    ovG->download(g);
-    ovGamma1i->download(gammas);
-    ovDV2->download(dv2);
-    ovVSfp->download(sfp);
-    ovAtomTreeSize->download(size);
-    ovTreePointer->download(tree_pointer_t);
-    ovProcessedFlag->download(processed);
-    ovOKtoProcessFlag->download(oktoprocess);
+    gtree->ovSelfVolume->download(self_volumes);
+    gtree->ovVolume->download(volumes);
+    gtree->ovLevel->download(level);
+    gtree->ovLastAtom->download(last_atom);
+    gtree->ovRootIndex->download(parent);
+    gtree->ovChildrenStartIndex->download(children_start_index);
+    gtree->ovChildrenCount->download(children_count);
+    gtree->ovChildrenReported->download(children_reported);
+    gtree->ovG->download(g);
+    gtree->ovGamma1i->download(gammas);
+    gtree->ovDV2->download(dv2);
+    gtree->ovVSfp->download(sfp);
+    gtree->ovAtomTreeSize->download(size);
+    gtree->ovTreePointer->download(tree_pointer_t);
+    gtree->ovProcessedFlag->download(processed);
+    gtree->ovOKtoProcessFlag->download(oktoprocess);
 
 
 
     std::cout << "Tree:" << std::endl;
-    for(int section = 0; section < num_sections; section++){
+    for(int section = 0; section < gtree->num_sections; section++){
       std::cout << "Tree for sections: " << section << " " << " size= " << size[section] << std::endl;
       int pp = tree_pointer_t[section];
-      int np = padded_tree_size[section];
+      int np = gtree->padded_tree_size[section];
       //self_volume += self_volumes[pp];
       std::cout << "slot level LastAtom parent ChStart ChCount SelfV V gamma a x y z dedx dedy dedz sfp processed ok2process children_reported" << endl;
       for(int i = pp; i < pp + np ; i++){
@@ -3075,7 +3080,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool incl
   
   if(verbose && !useLong){
     vector<float> inv_br_buffer(cl.getPaddedNumAtoms()*num_compute_units);
-    AccumulationBuffer1_real->download(inv_br_buffer);
+    gtree->AccumulationBuffer1_real->download(inv_br_buffer);
     for(int cu=0;cu<num_compute_units;cu++){
       for(int iatom = 0; iatom < cl.getPaddedNumAtoms(); iatom++){
 	cout << "BR_buff: " << cu << " " << iatom << " " << inv_br_buffer[cl.getPaddedNumAtoms()*cu + iatom] << endl;
@@ -3085,7 +3090,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool incl
 
   if(verbose && useLong){
     vector<long> inv_br_buffer(cl.getPaddedNumAtoms());
-    AccumulationBuffer1_long->download(inv_br_buffer);
+    gtree->AccumulationBuffer1_long->download(inv_br_buffer);
     float scale = 1/(float) 0x100000000;
     for(int iatom = 0; iatom < cl.getPaddedNumAtoms(); iatom++){
       cout << "invBR_buff: " << iatom << " " << scale*inv_br_buffer[iatom] << endl;
@@ -3168,7 +3173,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool incl
 
   if(verbose_level > 3 && !useLong){
     vector<float> gbdery_buffer(cl.getPaddedNumAtoms()*num_compute_units);
-    AccumulationBuffer1_real->download(gbdery_buffer);
+    gtree->AccumulationBuffer1_real->download(gbdery_buffer);
     for(int cu=0;cu<num_compute_units;cu++){
       for(int iatom = 0; iatom < cl.getPaddedNumAtoms(); iatom++){
 	cout << "Y_buff: " << cu << " " << iatom << " " << gbdery_buffer[cl.getPaddedNumAtoms()*cu + iatom] << endl;
@@ -3183,7 +3188,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool incl
   if(verbose){
     // get the GB energy (sum over the atoms in the buffer)
     vector<float> gb_energies(cl.getPaddedNumAtoms()*num_compute_units);
-    AccumulationBuffer1_real->download(gb_energies);
+    gtree->AccumulationBuffer1_real->download(gb_energies);
     double gb_energy = 0.0;
     for(int i=0; i<numParticles; i++){
       cout << "EGB: " << i << " " << gb_energies[i] << endl;
@@ -3225,7 +3230,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool incl
 
   if(verbose && !useLong){
     vector<float> gbderu_buffer(cl.getPaddedNumAtoms()*num_compute_units);
-    AccumulationBuffer2_real->download(gbderu_buffer);
+    gtree->AccumulationBuffer2_real->download(gbderu_buffer);
     for(int cu=0;cu<num_compute_units;cu++){
       for(int iatom = 0; iatom < cl.getPaddedNumAtoms(); iatom++){
 	cout << "U_buff: " << cu << " " << iatom << " " << gbderu_buffer[cl.getPaddedNumAtoms()*cu + iatom] << endl;
@@ -3287,52 +3292,52 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool incl
   
   if(verbose_level > 4){
     float self_volume = 0.0;
-    vector<cl_float> self_volumes(total_tree_size);
-    vector<cl_float> volumes(total_tree_size);
-    vector<cl_double> energies(total_tree_size);
-    vector<cl_float> gammas(total_tree_size);
-    vector<cl_int> last_atom(total_tree_size);
-    vector<cl_int> level(total_tree_size);
-    vector<cl_int> parent(total_tree_size);
-    vector<cl_int> children_start_index(total_tree_size);
-    vector<cl_int> children_count(total_tree_size);
-    vector<cl_int> children_reported(total_tree_size);
-    vector<mm_float4> g(total_tree_size);
-    vector<mm_float4> dv2(total_tree_size);
-    vector<mm_float4> dv1(total_tree_size);
-    vector<cl_float> sfp(total_tree_size);
-    vector<int> size(num_sections);
-    vector<int> tree_pointer_t(num_sections);
-    vector<cl_int> processed(total_tree_size);
-    vector<cl_int> oktoprocess(total_tree_size);
+    vector<cl_float> self_volumes(gtree->total_tree_size);
+    vector<cl_float> volumes(gtree->total_tree_size);
+    vector<cl_double> energies(gtree->total_tree_size);
+    vector<cl_float> gammas(gtree->total_tree_size);
+    vector<cl_int> last_atom(gtree->total_tree_size);
+    vector<cl_int> level(gtree->total_tree_size);
+    vector<cl_int> parent(gtree->total_tree_size);
+    vector<cl_int> children_start_index(gtree->total_tree_size);
+    vector<cl_int> children_count(gtree->total_tree_size);
+    vector<cl_int> children_reported(gtree->total_tree_size);
+    vector<mm_float4> g(gtree->total_tree_size);
+    vector<mm_float4> dv2(gtree->total_tree_size);
+    vector<mm_float4> dv1(gtree->total_tree_size);
+    vector<cl_float> sfp(gtree->total_tree_size);
+    vector<int> size(gtree->num_sections);
+    vector<int> tree_pointer_t(gtree->num_sections);
+    vector<cl_int> processed(gtree->total_tree_size);
+    vector<cl_int> oktoprocess(gtree->total_tree_size);
 
 
-    ovSelfVolume->download(self_volumes);
-    ovVolume->download(volumes);
-    ovVolEnergy->download(energies);
-    ovLevel->download(level);
-    ovLastAtom->download(last_atom);
-    ovRootIndex->download(parent);
-    ovChildrenStartIndex->download(children_start_index);
-    ovChildrenCount->download(children_count);
-    ovChildrenReported->download(children_reported);
-    ovG->download(g);
-    ovGamma1i->download(gammas);
-    ovDV1->download(dv1);
-    ovDV2->download(dv2);
-    ovVSfp->download(sfp);
-    ovAtomTreeSize->download(size);
-    ovTreePointer->download(tree_pointer_t);
-    ovProcessedFlag->download(processed);
-    ovOKtoProcessFlag->download(oktoprocess);
+    gtree->ovSelfVolume->download(self_volumes);
+    gtree->ovVolume->download(volumes);
+    gtree->ovVolEnergy->download(energies);
+    gtree->ovLevel->download(level);
+    gtree->ovLastAtom->download(last_atom);
+    gtree->ovRootIndex->download(parent);
+    gtree->ovChildrenStartIndex->download(children_start_index);
+    gtree->ovChildrenCount->download(children_count);
+    gtree->ovChildrenReported->download(children_reported);
+    gtree->ovG->download(g);
+    gtree->ovGamma1i->download(gammas);
+    gtree->ovDV1->download(dv1);
+    gtree->ovDV2->download(dv2);
+    gtree->ovVSfp->download(sfp);
+    gtree->ovAtomTreeSize->download(size);
+    gtree->ovTreePointer->download(tree_pointer_t);
+    gtree->ovProcessedFlag->download(processed);
+    gtree->ovOKtoProcessFlag->download(oktoprocess);
 
 
 
     std::cout << "Tree:" << std::endl;
-    for(int section = 0; section < num_sections; section++){
+    for(int section = 0; section < gtree->num_sections; section++){
       std::cout << "Tree for sections: " << section << " " << " size= " << size[section] << std::endl;
       int pp = tree_pointer_t[section];
-      int np = padded_tree_size[section];
+      int np = gtree->padded_tree_size[section];
       //self_volume += self_volumes[pp];
       std::cout << "slot level LastAtom parent ChStart ChCount SelfV V gamma Energy a x y z dedx dedy dedz sfp processed ok2process children_reported" << endl;
       for(int i = pp; i < pp + np ; i++){
@@ -3381,9 +3386,9 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool incl
   
   if(verbose){
     vector<int> atom_pointer(cl.getPaddedNumAtoms());
-    vector<double> vol_energies(total_tree_size);
-    ovAtomTreePointer->download(atom_pointer);
-    ovVolEnergy->download(vol_energies);
+    vector<double> vol_energies(gtree->total_tree_size);
+    gtree->ovAtomTreePointer->download(atom_pointer);
+    gtree->ovVolEnergy->download(vol_energies);
     double energy = 0;
     for(int i=0;i<numParticles;i++){
       int slot = atom_pointer[i];
@@ -3394,48 +3399,48 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool incl
   
   if(verbose_level > 4){
     float self_volume = 0.0;
-    vector<cl_float> self_volumes(total_tree_size);
-    vector<cl_float> volumes(total_tree_size);
-    vector<cl_float> gammas(total_tree_size);
-    vector<cl_int> last_atom(total_tree_size);
-    vector<cl_int> level(total_tree_size);
-    vector<cl_int> parent(total_tree_size);
-    vector<cl_int> children_start_index(total_tree_size);
-    vector<cl_int> children_count(total_tree_size);
-    vector<cl_int> children_reported(total_tree_size);
-    vector<mm_float4> g(total_tree_size);
-    vector<mm_float4> dv2(total_tree_size);
-    vector<cl_float> sfp(total_tree_size);
-    vector<int> size(num_sections);
-    vector<int> tree_pointer_t(num_sections);
-    vector<cl_int> processed(total_tree_size);
-    vector<cl_int> oktoprocess(total_tree_size);
+    vector<cl_float> self_volumes(gtree->total_tree_size);
+    vector<cl_float> volumes(gtree->total_tree_size);
+    vector<cl_float> gammas(gtree->total_tree_size);
+    vector<cl_int> last_atom(gtree->total_tree_size);
+    vector<cl_int> level(gtree->total_tree_size);
+    vector<cl_int> parent(gtree->total_tree_size);
+    vector<cl_int> children_start_index(gtree->total_tree_size);
+    vector<cl_int> children_count(gtree->total_tree_size);
+    vector<cl_int> children_reported(gtree->total_tree_size);
+    vector<mm_float4> g(gtree->total_tree_size);
+    vector<mm_float4> dv2(gtree->total_tree_size);
+    vector<cl_float> sfp(gtree->total_tree_size);
+    vector<int> size(gtree->num_sections);
+    vector<int> tree_pointer_t(gtree->num_sections);
+    vector<cl_int> processed(gtree->total_tree_size);
+    vector<cl_int> oktoprocess(gtree->total_tree_size);
 
 
-    ovSelfVolume->download(self_volumes);
-    ovVolume->download(volumes);
-    ovLevel->download(level);
-    ovLastAtom->download(last_atom);
-    ovRootIndex->download(parent);
-    ovChildrenStartIndex->download(children_start_index);
-    ovChildrenCount->download(children_count);
-    ovChildrenReported->download(children_reported);
-    ovG->download(g);
-    ovGamma1i->download(gammas);
-    ovDV2->download(dv2);
-    ovVSfp->download(sfp);
-    ovAtomTreeSize->download(size);
-    ovTreePointer->download(tree_pointer_t);
-    ovProcessedFlag->download(processed);
-    ovOKtoProcessFlag->download(oktoprocess);
+    gtree->ovSelfVolume->download(self_volumes);
+    gtree->ovVolume->download(volumes);
+    gtree->ovLevel->download(level);
+    gtree->ovLastAtom->download(last_atom);
+    gtree->ovRootIndex->download(parent);
+    gtree->ovChildrenStartIndex->download(children_start_index);
+    gtree->ovChildrenCount->download(children_count);
+    gtree->ovChildrenReported->download(children_reported);
+    gtree->ovG->download(g);
+    gtree->ovGamma1i->download(gammas);
+    gtree->ovDV2->download(dv2);
+    gtree->ovVSfp->download(sfp);
+    gtree->ovAtomTreeSize->download(size);
+    gtree->ovTreePointer->download(tree_pointer_t);
+    gtree->ovProcessedFlag->download(processed);
+    gtree->ovOKtoProcessFlag->download(oktoprocess);
 
 
 
     std::cout << "Tree:" << std::endl;
-    for(int section = 0; section < num_sections; section++){
+    for(int section = 0; section < gtree->num_sections; section++){
       std::cout << "Tree for sections: " << section << " " << " size= " << size[section] << std::endl;
       int pp = tree_pointer_t[section];
-      int np = padded_tree_size[section];
+      int np = gtree->padded_tree_size[section];
       //self_volume += self_volumes[pp];
       std::cout << "slot level LastAtom parent ChStart ChCount SelfV V gamma a x y z dedx dedy dedz sfp processed ok2process children_reported" << endl;
       for(int i = pp; i < pp + np ; i++){
@@ -3449,17 +3454,17 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool incl
   }
   
   if(false){
-    vector<int> size(num_sections);
-    vector<int> niter(num_sections);
-    ovAtomTreeSize->download(size);
+    vector<int> size(gtree->num_sections);
+    vector<int> niter(gtree->num_sections);
+    gtree->ovAtomTreeSize->download(size);
     cout << "Sizes: ";
-    for(int section = 0; section < num_sections; section++){
+    for(int section = 0; section < gtree->num_sections; section++){
       std::cout << size[section] << " ";
     }
     std::cout << endl;
-    NIterations->download(niter);
+    gtree->NIterations->download(niter);
     cout << "Niter: ";
-    for(int section = 0; section < num_sections; section++){
+    for(int section = 0; section < gtree->num_sections; section++){
       std::cout << niter[section] << " ";
     }
     std::cout << endl;
@@ -3468,17 +3473,17 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool incl
 
   //temp arrays
   if(false){
-    vector<cl_int> i_buffer(temp_buffer_size);
-    vector<cl_int> atomj_buffer(temp_buffer_size);
-    vector<cl_uint> tree_pos_buffer(temp_buffer_size);
-    vector<cl_float> gvol_buffer(temp_buffer_size);
+    vector<cl_int> i_buffer(gtree->temp_buffer_size);
+    vector<cl_int> atomj_buffer(gtree->temp_buffer_size);
+    vector<cl_uint> tree_pos_buffer(gtree->temp_buffer_size);
+    vector<cl_float> gvol_buffer(gtree->temp_buffer_size);
     int stride = ov_work_group_size*64;
-    i_buffer_temp->download(i_buffer);
-    atomj_buffer_temp->download(atomj_buffer);
-    tree_pos_buffer_temp->download(tree_pos_buffer);
-    gvol_buffer_temp->download(gvol_buffer);
+    gtree->i_buffer_temp->download(i_buffer);
+    gtree->atomj_buffer_temp->download(atomj_buffer);
+    gtree->tree_pos_buffer_temp->download(tree_pos_buffer);
+    gtree->gvol_buffer_temp->download(gvol_buffer);
     std::cout << "i_buffer   " << "atomj_buffer  " << "gvol   " << " fij  " <<  std::endl;
-    for(int sect = 0; sect < num_sections; sect++){
+    for(int sect = 0; sect < gtree->num_sections; sect++){
       int buffer_offset = stride*sect;
       for(int j = 0; j < 640 ; j++){
 	int i = j + buffer_offset;
@@ -3490,7 +3495,7 @@ double OpenCLCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool incl
   //gammas
   if(false){
     float mol_volume = 0.0;
-    vector<cl_float> gamma(num_sections);
+    vector<cl_float> gamma(gtree->num_sections);
     AtomicGamma->download(gamma);
     std::cout << "Gammas:" << std::endl;
     for(int iat = 0; iat < numParticles; iat++){

@@ -13,30 +13,6 @@ using namespace std;
 
 namespace AGBNPPlugin {
 
-
-class GOverlap_Tree {
- public:
-  int size;
-  int direction;
-  int next_slot_to_process;
-  //list of overlaps
-  vector<int> level;               //level (0=root, 1=atoms, 2=2-body, 3=3-body, etc.)
-  vector<float> a;                 // Gaussian exponent
-  vector<float> volume;            // Gaussian volume
-  vector<float> cx, cy, cz;        //coordinates of center
-  vector<float> dvv1;              // derivative wrt volume of first atom (also stores F1..i in GPU version)
-  vector<float> dv1x, dv1y, dv1z;  // derivative wrt position of first atom (also stores P1..i in GPU version) 
-  vector<float> gamma1i;           // sum gammai for this overlap
-  vector<float> self_volume;       //self volume of overlap
-  vector<float> sfp;               //switching function derivatives  
-  vector<int> atom;                //the last atom forming the overlap
-  vector<int> root_index;        //the index of the parent (or -1 for null)
-  vector<int> children_startindex; //start index in tree of list of children (or -1 for null)
-  vector<int> children_count;      //number of children
-  vector<int> processed;           //a flag to mark overlap that has been processed
-  vector<int> process;             //a flag to mark an overlap to be processed
-};
-
 /**
  * This kernel is invoked by AGBNPForce to calculate the forces acting on the system and the energy of the system.
  */
@@ -62,54 +38,10 @@ public:
     VdWDerBrW = NULL;
     VdWDerW = NULL;
     
-    selfVolumeBuffer_long = NULL;
-    selfVolumeBuffer = NULL;
-    AccumulationBuffer1_long = NULL;
-    AccumulationBuffer1_real = NULL;
-    AccumulationBuffer2_long = NULL;
-    AccumulationBuffer2_real = NULL;
-
-    ovAtomTreePointer = NULL;
-    ovAtomTreeSize = NULL;
-    ovTreePointer = NULL;
-    ovNumAtomsInTree = NULL;
-    ovFirstAtom = NULL;
-    NIterations = NULL;
-    ovAtomTreePaddedSize = NULL;
-    ovAtomTreeLock = NULL;
-    ovLevel = NULL;
-    ovG = NULL;
-    ovVolume = NULL;
-    ovVSfp = NULL;
-    ovSelfVolume = NULL;
-    ovVolEnergy = NULL;
-    ovGamma1i = NULL;
-
-    ovDV1 = NULL;
-    ovDV2 = NULL;
-    ovPF = NULL;
-    
-    ovLastAtom = NULL;
-    ovRootIndex = NULL;
-    ovChildrenStartIndex = NULL;
-    ovChildrenCount = NULL;
-    ovChildrenCountTop = NULL;
-    ovChildrenCountBottom = NULL;
-    ovProcessedFlag = NULL;
-    ovOKtoProcessFlag = NULL;
-    ovAtomBuffer = NULL;
-    ovChildrenReported = NULL;
-
     GaussianExponent = NULL;
     GaussianVolume = NULL;
 
     AtomicGamma = NULL;
-
-    temp_buffer_size = -1;
-    gvol_buffer_temp = NULL;
-    tree_pos_buffer_temp = NULL;
-    i_buffer_temp = NULL;
-    atomj_buffer_temp = NULL;
 
     i4_lut = NULL;    
     i4YValues = NULL;
@@ -121,8 +53,6 @@ public:
     pinnedPanicButtonBuffer = NULL;
     pinnedPanicButtonMemory = NULL;
     hasExceededTempBuffer = false;    
-    tree_size_boost = 2;
-    has_saved_noverlaps = false;
   }
 
     ~OpenCLCalcAGBNPForceKernel();
@@ -150,15 +80,171 @@ public:
      */
     void copyParametersToContext(OpenMM::ContextImpl& context, const AGBNPForce& force);
 
-    /**
-     * Copy overlap tree to device
-     *
-     */
-    int copy_tree_to_device(void);
+    class OpenCLOverlapTree {
+    public:
+      OpenCLOverlapTree(void){
+	ovAtomTreePointer = NULL;
+	ovAtomTreeSize = NULL;
+	ovTreePointer = NULL;
+	ovNumAtomsInTree = NULL;
+	ovFirstAtom = NULL;
+	NIterations = NULL;
+	ovAtomTreePaddedSize = NULL;
+	ovAtomTreeLock = NULL;
+	ovLevel = NULL;
+	ovG = NULL;
+	ovVolume = NULL;
+	ovVSfp = NULL;
+	ovSelfVolume = NULL;
+	ovVolEnergy = NULL;
+	ovGamma1i = NULL;
+	ovDV1 = NULL;
+	ovDV2 = NULL;
+	ovPF = NULL;
+	ovLastAtom = NULL;
+	ovRootIndex = NULL;
+	ovChildrenStartIndex = NULL;
+	ovChildrenCount = NULL;
+	ovChildrenCountTop = NULL;
+	ovChildrenCountBottom = NULL;
+	ovProcessedFlag = NULL;
+	ovOKtoProcessFlag = NULL;
+	ovChildrenReported = NULL;
 
-    /* init tree */
-    void init_tree_size(int pad_modulo, vector<int>& noverlaps);
+	ovAtomBuffer = NULL;	    
+	selfVolumeBuffer_long = NULL;
+	selfVolumeBuffer = NULL;
+	AccumulationBuffer1_long = NULL;
+	AccumulationBuffer1_real = NULL;
+	AccumulationBuffer2_long = NULL;
+	AccumulationBuffer2_real = NULL;
 
+	temp_buffer_size = -1;
+	gvol_buffer_temp = NULL;
+	tree_pos_buffer_temp = NULL;
+	i_buffer_temp = NULL;
+	atomj_buffer_temp = NULL;
+	
+	has_saved_noverlaps = false;
+	tree_size_boost = 2;
+      };
+
+      ~OpenCLOverlapTree(void){
+	delete ovAtomTreePointer;
+	delete ovAtomTreeSize;
+	delete ovTreePointer;
+	delete ovNumAtomsInTree;
+	delete ovFirstAtom;
+	delete NIterations;
+	delete ovAtomTreePaddedSize;
+	delete ovAtomTreeLock;
+	delete ovLevel;
+	delete ovG;
+	delete ovVolume;
+	delete ovVSfp;
+	delete ovSelfVolume;
+	delete ovVolEnergy;
+	delete ovGamma1i;
+	delete ovDV1;
+	delete ovDV2;
+	delete ovPF;
+	delete ovLastAtom;
+	delete ovRootIndex;
+	delete ovChildrenStartIndex;
+	delete ovChildrenCount;
+	delete ovChildrenCountTop;
+	delete ovChildrenCountBottom;
+	delete ovProcessedFlag;
+	delete ovOKtoProcessFlag;
+	delete ovChildrenReported;
+
+	delete ovAtomBuffer;	    
+	delete selfVolumeBuffer_long;
+	delete selfVolumeBuffer;
+	delete AccumulationBuffer1_long;
+	delete AccumulationBuffer1_real;
+	delete AccumulationBuffer2_long;
+	delete AccumulationBuffer2_real;
+
+	delete gvol_buffer_temp;
+	delete tree_pos_buffer_temp;
+	delete i_buffer_temp;
+	delete atomj_buffer_temp;
+      }; 
+      
+      //initializes tree sections and sizes
+      void init_tree_size(int num_atoms, int padded_num_atoms, int num_compute_units, int pad_modulo, vector<int>& noverlaps_current);
+
+      //resizes tree buffers
+      void resize_tree_buffers(OpenMM::OpenCLContext& cl, int ov_work_group_size, bool hasExceededTempBuffer);
+      
+      //copies the tree framework to OpenCL device memory
+      int copy_tree_to_device(void);
+      
+
+      // host variables and buffers
+      int num_atoms;
+      int padded_num_atoms;
+      int total_atoms_in_tree;
+      int total_tree_size;
+      int num_sections;
+      vector<int> tree_size;
+      vector<int> padded_tree_size;
+      vector<int> atom_tree_pointer; //pointers to 1-body atom slots
+      vector<int> tree_pointer;      //pointers to tree sections
+      vector<int> natoms_in_tree;    //no. atoms in each tree section
+      vector<int> first_atom;        //the first atom in each tree section
+
+      /* overlap tree buffers on Device */
+      OpenMM::OpenCLArray* ovAtomTreePointer;
+      OpenMM::OpenCLArray* ovAtomTreeSize;
+      OpenMM::OpenCLArray* ovTreePointer;
+      OpenMM::OpenCLArray* ovNumAtomsInTree;
+      OpenMM::OpenCLArray* ovFirstAtom;
+      OpenMM::OpenCLArray* NIterations;
+      OpenMM::OpenCLArray* ovAtomTreePaddedSize;
+      OpenMM::OpenCLArray* ovAtomTreeLock;
+      OpenMM::OpenCLArray* ovLevel;
+      OpenMM::OpenCLArray* ovG; // real4: Gaussian position + exponent
+      OpenMM::OpenCLArray* ovVolume;
+      OpenMM::OpenCLArray* ovVSfp;
+      OpenMM::OpenCLArray* ovSelfVolume;
+      OpenMM::OpenCLArray* ovVolEnergy;
+      OpenMM::OpenCLArray* ovGamma1i;
+      /* volume derivatives */
+      OpenMM::OpenCLArray* ovDV1; // real4: dV12/dr1 + dV12/dV1 for each overlap
+      OpenMM::OpenCLArray* ovDV2; // volume gradient accumulator
+      OpenMM::OpenCLArray* ovPF;  //(P) and (F) aux variables
+      
+      OpenMM::OpenCLArray* ovLastAtom;
+      OpenMM::OpenCLArray* ovRootIndex;
+      OpenMM::OpenCLArray* ovChildrenStartIndex;
+      OpenMM::OpenCLArray* ovChildrenCount;
+      OpenMM::OpenCLArray* ovChildrenCountTop;
+      OpenMM::OpenCLArray* ovChildrenCountBottom;
+      OpenMM::OpenCLArray* ovProcessedFlag;
+      OpenMM::OpenCLArray* ovOKtoProcessFlag;
+      OpenMM::OpenCLArray* ovChildrenReported;
+
+      OpenMM::OpenCLArray* ovAtomBuffer;	    
+      OpenMM::OpenCLArray* selfVolumeBuffer_long;
+      OpenMM::OpenCLArray* selfVolumeBuffer;
+      OpenMM::OpenCLArray* AccumulationBuffer1_long;
+      OpenMM::OpenCLArray* AccumulationBuffer1_real;
+      OpenMM::OpenCLArray* AccumulationBuffer2_long;
+      OpenMM::OpenCLArray* AccumulationBuffer2_real;
+      
+      int temp_buffer_size;
+      OpenMM::OpenCLArray*  gvol_buffer_temp;
+      OpenMM::OpenCLArray*  tree_pos_buffer_temp;
+      OpenMM::OpenCLArray*  i_buffer_temp;
+      OpenMM::OpenCLArray*  atomj_buffer_temp;
+
+      int tree_size_boost;
+      int has_saved_noverlaps;
+      vector<int> saved_noverlaps;
+    };//class OpenCLOverlapTree
+    
 private:
     const AGBNPForce *gvol_force;
 
@@ -174,7 +260,12 @@ private:
     bool hasCreatedKernels;
     OpenMM::OpenCLContext& cl;
     const OpenMM::System& system;
-
+    int ov_work_group_size; //thread group size
+    int num_compute_units;
+    
+    OpenCLOverlapTree *gtree;   //tree of atomic overlaps
+    OpenCLOverlapTree *gtreems; //tree of MS particles overlaps
+    
 
     OpenMM::OpenCLArray* radiusParam1;
     OpenMM::OpenCLArray* radiusParam2;
@@ -209,60 +300,8 @@ private:
     OpenMM::OpenCLArray* VdWDerBrW;
     OpenMM::OpenCLArray* VdWDerW;
     
-    OpenMM::OpenCLArray* selfVolumeBuffer_long;
-    OpenMM::OpenCLArray* selfVolumeBuffer;
-    OpenMM::OpenCLArray* AccumulationBuffer1_long;
-    OpenMM::OpenCLArray* AccumulationBuffer1_real;
-    OpenMM::OpenCLArray* AccumulationBuffer2_long;
-    OpenMM::OpenCLArray* AccumulationBuffer2_real;
     
     
-    // tree sizes etc
-    int total_atoms_in_tree;
-    int total_tree_size;
-    int num_sections;
-    int ov_work_group_size; //thread group size
-    int num_compute_units;
-    vector<int> tree_size;
-    vector<int> padded_tree_size;
-    vector<int> atom_tree_pointer; //pointers to 1-body atom slots
-    vector<int> tree_pointer;      //pointers to tree sections
-    vector<int> natoms_in_tree;    //no. atoms in each tree section
-    vector<int> first_atom;        //the first atom in each tree section
-
-    /* self volume coefficients */
-    OpenMM::OpenCLArray* ovVolCoeff;
-    /* overlap tree buffers */
-    OpenMM::OpenCLArray* ovAtomTreePointer;
-    OpenMM::OpenCLArray* ovAtomTreeSize;
-    OpenMM::OpenCLArray* ovTreePointer;
-    OpenMM::OpenCLArray* ovNumAtomsInTree;
-    OpenMM::OpenCLArray* ovFirstAtom;
-    OpenMM::OpenCLArray* NIterations;
-    OpenMM::OpenCLArray* ovAtomTreePaddedSize;
-    OpenMM::OpenCLArray* ovAtomTreeLock;
-    OpenMM::OpenCLArray* ovLevel;
-    OpenMM::OpenCLArray* ovG; // real4: Gaussian position + exponent
-    OpenMM::OpenCLArray* ovVolume;
-    OpenMM::OpenCLArray* ovVSfp;
-    OpenMM::OpenCLArray* ovSelfVolume;
-    OpenMM::OpenCLArray* ovVolEnergy;
-    OpenMM::OpenCLArray* ovGamma1i;
-    /* volume derivatives */
-    OpenMM::OpenCLArray* ovDV1; // real4: dV12/dr1 + dV12/dV1 for each overlap
-    OpenMM::OpenCLArray* ovDV2; // volume gradient accumulator
-    OpenMM::OpenCLArray* ovPF;  //(P) and (F) aux variables
-    
-    OpenMM::OpenCLArray* ovLastAtom;
-    OpenMM::OpenCLArray* ovRootIndex;
-    OpenMM::OpenCLArray* ovChildrenStartIndex;
-    OpenMM::OpenCLArray* ovChildrenCount;
-    OpenMM::OpenCLArray* ovChildrenCountTop;
-    OpenMM::OpenCLArray* ovChildrenCountBottom;
-    OpenMM::OpenCLArray* ovProcessedFlag;
-    OpenMM::OpenCLArray* ovOKtoProcessFlag;
-    OpenMM::OpenCLArray* ovAtomBuffer;
-    OpenMM::OpenCLArray* ovChildrenReported;
 
 
     cl::Kernel resetBufferKernel;
@@ -309,11 +348,6 @@ private:
     
     int niterations;
 
-    int temp_buffer_size;
-    OpenMM::OpenCLArray*  gvol_buffer_temp;
-    OpenMM::OpenCLArray*  tree_pos_buffer_temp;
-    OpenMM::OpenCLArray*  i_buffer_temp;
-    OpenMM::OpenCLArray*  atomj_buffer_temp;
 
     //Born radii and such
     int ntypes_screener;
@@ -364,9 +398,6 @@ private:
     int* pinnedPanicButtonMemory;
     cl::Event downloadPanicButtonEvent;
     bool hasExceededTempBuffer;
-    int tree_size_boost;
-    bool has_saved_noverlaps;
-    vector<int> saved_noverlaps;
 };
 
 } // namespace AGBNPPlugin

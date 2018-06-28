@@ -160,7 +160,7 @@ __kernel void initBornRadii(unsigned const int             bufferSize,
   //compute scaling factors
   iatom = get_global_id(0);
   while(iatom < NUM_ATOMS){
-    real rad = radiusParam[iatom] + AGBNP_RADIUS_INCREMENT;
+    real rad = radiusParam[iatom];
     real vol = (4./3.)*PI*rad*rad*rad;
     volScalingFactor[iatom] = selfVolume[iatom]/vol;
     iatom += get_global_size(0);
@@ -1654,7 +1654,7 @@ __kernel void reduceVdWGBDerBorn(unsigned const int bufferSize, unsigned const i
  atom = id;
  real fac = 4.*PI/3.0;
  while (atom < NUM_ATOMS) {
-   real r = radiusParam[atom]+AGBNP_RADIUS_INCREMENT;
+   real r = radiusParam[atom];
    real vol = fac*r*r*r;
    GBDerU[atom]  /= vol;
    VdWDerW[atom] /= vol;   
