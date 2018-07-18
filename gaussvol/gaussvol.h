@@ -43,8 +43,8 @@ using namespace OpenMM;
 #define GAUSSVOL_ERR (-1)
 
 /* conversion factors from spheres to Gaussians */
-#define KFC (2.2269859253)
-#define PFC (2.5);
+#define KFC (2.2269859253f)
+#define PFC (2.5f);
 
 #define PI (M_PI)
 

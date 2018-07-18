@@ -9,6 +9,7 @@
 #include "AGBNPKernels.h"
 #include "openmm/opencl/OpenCLContext.h"
 #include "openmm/opencl/OpenCLArray.h"
+#include "openmm/reference/RealVec.h"
 using namespace std;
 
 namespace AGBNPPlugin {
@@ -28,6 +29,7 @@ public:
     radtypeScreener = NULL;
     
     selfVolume = NULL;
+    Semaphor = NULL;
     volScalingFactor = NULL;
     BornRadius = NULL;
     invBornRadius = NULL;
@@ -52,7 +54,15 @@ public:
     PanicButton = NULL;
     pinnedPanicButtonBuffer = NULL;
     pinnedPanicButtonMemory = NULL;
-    hasExceededTempBuffer = false;    
+
+    do_ms = false;
+    MSparticle1 = NULL;
+    MSparticle2 = NULL;
+
+    MSLongForceBuffer = NULL;
+    
+    MScount1 = NULL;
+    MScount2 = NULL;
   }
 
     ~OpenCLCalcAGBNPForceKernel();
@@ -94,6 +104,7 @@ public:
 	ovLevel = NULL;
 	ovG = NULL;
 	ovVolume = NULL;
+	ovVsp = NULL;
 	ovVSfp = NULL;
 	ovSelfVolume = NULL;
 	ovVolEnergy = NULL;
@@ -126,7 +137,10 @@ public:
 	atomj_buffer_temp = NULL;
 	
 	has_saved_noverlaps = false;
-	tree_size_boost = 2;
+	tree_size_boost = 2;//6;//debug 2 is default
+
+	hasExceededTempBuffer = false;    
+
       };
 
       ~OpenCLOverlapTree(void){
@@ -141,6 +155,7 @@ public:
 	delete ovLevel;
 	delete ovG;
 	delete ovVolume;
+	delete ovVsp;
 	delete ovVSfp;
 	delete ovSelfVolume;
 	delete ovVolEnergy;
@@ -172,11 +187,14 @@ public:
 	delete atomj_buffer_temp;
       }; 
       
-      //initializes tree sections and sizes
+      //initializes tree sections and sizes with number of atoms and number of overlaps
       void init_tree_size(int num_atoms, int padded_num_atoms, int num_compute_units, int pad_modulo, vector<int>& noverlaps_current);
 
+      //simpler version with precomputed tree sizes
+      void init_tree_size(int padded_num_atoms, int tree_section_size, int num_compute_units, int pad_modulo);
+      
       //resizes tree buffers
-      void resize_tree_buffers(OpenMM::OpenCLContext& cl, int ov_work_group_size, bool hasExceededTempBuffer);
+      void resize_tree_buffers(OpenMM::OpenCLContext& cl, int ov_work_group_size);
       
       //copies the tree framework to OpenCL device memory
       int copy_tree_to_device(void);
@@ -207,6 +225,7 @@ public:
       OpenMM::OpenCLArray* ovLevel;
       OpenMM::OpenCLArray* ovG; // real4: Gaussian position + exponent
       OpenMM::OpenCLArray* ovVolume;
+      OpenMM::OpenCLArray* ovVsp;
       OpenMM::OpenCLArray* ovVSfp;
       OpenMM::OpenCLArray* ovSelfVolume;
       OpenMM::OpenCLArray* ovVolEnergy;
@@ -240,10 +259,137 @@ public:
       OpenMM::OpenCLArray*  i_buffer_temp;
       OpenMM::OpenCLArray*  atomj_buffer_temp;
 
-      int tree_size_boost;
+      double tree_size_boost;
       int has_saved_noverlaps;
       vector<int> saved_noverlaps;
+
+      bool hasExceededTempBuffer;
     };//class OpenCLOverlapTree
+
+
+    //a class to mange MS particle OpenCL buffers
+    class OpenCLMSParticle {
+    public:
+      OpenCLMSParticle(int count, int size, int ntiles, int tile_size, OpenMM::OpenCLContext& cl): ms_count(count), ms_size(size), ntiles(ntiles), tile_size(tile_size), cl(cl) {
+	MScount =     OpenCLArray::create<cl_int>(cl, ntiles, "MScount");
+	MSptr =       OpenCLArray::create<cl_int>(cl, size, "MSptr");
+	MSpVol0 =     OpenCLArray::create<cl_float>(cl, size, "MSpVol0");
+	MSpVolLarge = OpenCLArray::create<cl_float>(cl, size, "MSpVolLarge");
+	MSpVolvdW =   OpenCLArray::create<cl_float>(cl, size, "MSpVolvdW");
+	MSpsspLarge = OpenCLArray::create<cl_float>(cl, size, "MSpsspLarge");
+	MSpsspvdW =   OpenCLArray::create<cl_float>(cl, size, "MSpsspvdW");
+	MSpPos =      OpenCLArray::create<mm_float4>(cl, size, "MSpPos");
+	MSpParent1 =  OpenCLArray::create<cl_int>(cl, size, "MSpParent1");
+	MSpParent2 =  OpenCLArray::create<cl_int>(cl, size, "MSpParent2");
+	MSpgder =     OpenCLArray::create<mm_float4>(cl, size, "MSpgder");
+	MSphder =     OpenCLArray::create<mm_float4>(cl, size, "MSphder");
+	MSpfms =      OpenCLArray::create<cl_float>(cl, size, "MSpfms");
+	MSpG0Large =  OpenCLArray::create<cl_float>(cl, size, "MSpG0Large");
+	MSpG0vdW =    OpenCLArray::create<cl_float>(cl, size, "MSpG0vdW");
+	MSpGaussExponent =    OpenCLArray::create<cl_float>(cl, size, "MSpGaussExponent");
+	MSpGamma =    OpenCLArray::create<cl_float>(cl, size, "MSpGamma");
+	MSpSelfVolume = OpenCLArray::create<cl_float>(cl, size, "MSpSelfVolume");
+	MSsemaphor =  OpenCLArray::create<cl_int>(cl, size, "MSsemaphor");
+	vector<int> zeros(size);
+	for(int i=0; i<size; i++) zeros[i] = 0;
+	MSsemaphor->upload(zeros);
+      };
+
+      ~OpenCLMSParticle(void){
+	delete MScount;
+	delete MSptr;
+	delete MSpVol0;
+	delete MSpVolLarge;
+	delete MSpVolvdW;
+	delete MSpsspLarge;
+	delete MSpsspvdW;
+	delete MSpPos;
+	delete MSpParent1;
+	delete MSpParent2;
+	delete MSpgder;
+	delete MSphder;
+	delete MSpfms;
+	delete MSpG0Large;
+	delete MSpG0vdW;
+	delete MSpGaussExponent;
+	delete MSpGamma;
+	delete MSpSelfVolume;
+	delete MSsemaphor;
+      };
+
+      void resize(int count, int size, int tile_size){
+	ms_count = count;
+	this->tile_size = tile_size;
+	if(ms_size < size){
+	  ms_size = size;
+	  delete MSptr;
+	  delete MSpVol0;
+	  delete MSpVolLarge;
+	  delete MSpVolvdW;
+	  delete MSpsspLarge;
+	  delete MSpsspvdW;
+	  delete MSpPos;
+	  delete MSpParent1;
+	  delete MSpParent2;
+	  delete MSpgder;
+	  delete MSphder;
+	  delete MSpfms;
+	  delete MSpG0Large;
+	  delete MSpG0vdW;
+	  delete MSpGaussExponent;
+	  delete MSpGamma;
+	  delete MSpSelfVolume;
+	  delete MSsemaphor;
+	  MSptr =       OpenCLArray::create<cl_int>(cl, size, "MSptr");
+	  MSpVol0 =     OpenCLArray::create<cl_float>(cl, size, "MSpVol0");
+	  MSpVolLarge = OpenCLArray::create<cl_float>(cl, size, "MSpVolLarge");
+	  MSpVolvdW =   OpenCLArray::create<cl_float>(cl, size, "MSpVolvdW");
+	  MSpsspLarge = OpenCLArray::create<cl_float>(cl, size, "MSpsspLarge");
+	  MSpsspvdW =   OpenCLArray::create<cl_float>(cl, size, "MSpsspvdW");
+	  MSpPos =      OpenCLArray::create<mm_float4>(cl, size, "MSpPos");
+	  MSpParent1 =  OpenCLArray::create<cl_int>(cl, size, "MSpParent1");
+	  MSpParent2 =  OpenCLArray::create<cl_int>(cl, size, "MSpParent2");
+	  MSpgder =     OpenCLArray::create<mm_float4>(cl, size, "MSpgder");
+	  MSphder =     OpenCLArray::create<mm_float4>(cl, size, "MSphder");
+	  MSpfms =      OpenCLArray::create<cl_float>(cl, size, "MSpfms");
+	  MSpG0Large =  OpenCLArray::create<cl_float>(cl, size, "MSpG0Large");
+	  MSpG0vdW =    OpenCLArray::create<cl_float>(cl, size, "MSpG0vdW");
+	  MSpGaussExponent =    OpenCLArray::create<cl_float>(cl, size, "MSpGaussExponent");
+	  MSpGamma =    OpenCLArray::create<cl_float>(cl, size, "MSpGamma");
+	  MSpSelfVolume = OpenCLArray::create<cl_float>(cl, size, "MSpSelfVolume");
+	  MSsemaphor =  OpenCLArray::create<cl_int>(cl, size, "MSsemaphor");
+	  vector<int> zeros(size);
+	  for(int i=0; i<size; i++) zeros[i] = 0;
+	  MSsemaphor->upload(zeros);
+	}
+      };
+      
+      OpenMM::OpenCLContext& cl;
+      int ms_size;
+      int ms_count;
+      int ntiles;//a tile for each warp
+      int tile_size;//size of a tile
+      OpenMM::OpenCLArray* MScount;//number of MS particle for each tile
+      OpenMM::OpenCLArray* MSptr;//pointer to MS list for each MS particle
+      OpenMM::OpenCLArray* MSpVol0;
+      OpenMM::OpenCLArray* MSpVolLarge;
+      OpenMM::OpenCLArray* MSpVolvdW;
+      OpenMM::OpenCLArray* MSpsspLarge;
+      OpenMM::OpenCLArray* MSpsspvdW;
+      OpenMM::OpenCLArray* MSpPos;
+      OpenMM::OpenCLArray* MSpParent1;
+      OpenMM::OpenCLArray* MSpParent2;
+      OpenMM::OpenCLArray* MSpgder;
+      OpenMM::OpenCLArray* MSphder;
+      OpenMM::OpenCLArray* MSpfms;
+      OpenMM::OpenCLArray* MSpG0Large;
+      OpenMM::OpenCLArray* MSpG0vdW;
+      OpenMM::OpenCLArray* MSpGaussExponent;
+      OpenMM::OpenCLArray* MSpGamma;
+      OpenMM::OpenCLArray* MSpSelfVolume;
+      OpenMM::OpenCLArray* MSsemaphor;
+    };//class OpenCLMSParticle
+
     
 private:
     const AGBNPForce *gvol_force;
@@ -265,7 +411,8 @@ private:
     
     OpenCLOverlapTree *gtree;   //tree of atomic overlaps
     OpenCLOverlapTree *gtreems; //tree of MS particles overlaps
-    
+
+    double solvent_radius; //solvent probe radius for AGBNP2
 
     OpenMM::OpenCLArray* radiusParam1;
     OpenMM::OpenCLArray* radiusParam2;
@@ -290,6 +437,7 @@ private:
     OpenMM::OpenCLArray* radtypeScreener;
     
     OpenMM::OpenCLArray* selfVolume;
+    OpenMM::OpenCLArray* Semaphor;
     OpenMM::OpenCLArray* volScalingFactor;
     OpenMM::OpenCLArray* BornRadius;
     OpenMM::OpenCLArray* invBornRadius;
@@ -397,9 +545,65 @@ private:
     cl::Buffer* pinnedPanicButtonBuffer;
     int* pinnedPanicButtonMemory;
     cl::Event downloadPanicButtonEvent;
-    bool hasExceededTempBuffer;
+
+    bool do_ms; //flag to turn off MS model if no MS particles
+    OpenCLMSParticle *MSparticle1;
+    OpenCLMSParticle *MSparticle2;
+    cl::Kernel MSParticles1ResetKernel;
+    cl::Kernel MSParticles1CountKernel;
+    cl::Kernel MSParticles1CountReduceKernel;
+    cl::Kernel MSParticles1StoreKernel;
+    cl::Kernel MSParticles1VfreeKernel;
+    cl::Kernel MSParticles1VolsKernel;
+    cl::Kernel MSParticles2CountKernel;
+    cl::Kernel MSInitOverlapTree_1body_1Kernel;
+    cl::Kernel MSresetTreeKernel;
+    cl::Kernel MSResetTreeCountKernel;
+    cl::Kernel MSInitOverlapTreeCountKernel;
+    cl::Kernel MSreduceovCountBufferKernel;
+    cl::Kernel MSInitOverlapTreeKernel;
+    cl::Kernel MSresetComputeOverlapTreeKernel;
+    cl::Kernel MSComputeOverlapTree_1passKernel;
+    cl::Kernel MSresetBufferKernel;
+    cl::Kernel MSresetSelfVolumesKernel;
+    cl::Kernel MScomputeSelfVolumesKernel;
+    cl::Kernel MSreduceSelfVolumesKernel_buffer;
+    cl::Kernel MSaddSelfVolumesKernel;
+    cl::Kernel MSaddSelfVolumesFromLongKernel;
+
+    
+    OpenMM::OpenCLArray* MSLongForceBuffer;
+    
+    OpenMM::OpenCLArray* MScount1;
+    OpenMM::OpenCLArray* MScount2;
+    
+    /*
+    OpenMM::OpenCLArray* test_input_buffer;
+    cl::Kernel TestScanWarpKernel;
+    */
 };
 
+
+ //class to record MS particles
+ class MSParticle {
+ public:
+   double vol;
+   double vol_large;
+   double vol_vdw;
+   double vol0;
+   double ssp_large;
+   double ssp_vdw;
+   RealVec pos;
+   int parent1;
+   int parent2;
+   RealVec gder;//used for volume derivatives
+   RealVec hder;//used for positional derivatives
+   double fms;
+   double G0_vdw; //accumulator for derivatives
+   double G0_large;
+ };
+
+ 
 } // namespace AGBNPPlugin
 
 #endif /*OPENCL_AGBNP_KERNELS_H_*/

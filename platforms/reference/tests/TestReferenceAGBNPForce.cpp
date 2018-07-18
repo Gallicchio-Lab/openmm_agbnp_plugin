@@ -31,7 +31,7 @@ void testForce() {
     System system;
     NonbondedForce *nb = new NonbondedForce();
     AGBNPForce* force = new AGBNPForce();
-    force->setVersion(1);
+    force->setVersion(2);
     system.addForce(nb);
     system.addForce(force);
     //read from stdin
@@ -114,7 +114,7 @@ void testForce() {
       positions[i] = save_pos;
     }
 #endif
-    //#ifdef NOTNOW
+#ifdef NOTNOW
     double offset = 2.e-3;
     int pmove = 121;
     int direction = 1;
@@ -125,7 +125,7 @@ void testForce() {
     std::cout << "Energy: " <<  energy2  << std::endl;
     std::cout << "Energy Change: " <<  energy2 - energy1  << std::endl;
     std::cout << "Energy Change from Gradient: " <<  de  << std::endl;
-    //#endif
+#endif
 }
 
 int main() {

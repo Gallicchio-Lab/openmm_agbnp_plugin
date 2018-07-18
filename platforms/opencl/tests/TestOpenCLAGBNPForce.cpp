@@ -86,7 +86,7 @@ void testForce() {
     }
     
     // validate force by moving an atom
-    //#ifdef NOTNOW
+#ifdef NOTNOW
     double offset = 2.e-3;
     int pmove = 121;
     int direction = 1;
@@ -97,7 +97,7 @@ void testForce() {
     std::cout << "Energy: " <<  energy2  << std::endl;
     std::cout << "Energy Change: " <<  energy2 - energy1  << std::endl;
     std::cout << "Energy Change from Gradient: " <<  de  << std::endl;
-    //#endif
+#endif
 
 }
 

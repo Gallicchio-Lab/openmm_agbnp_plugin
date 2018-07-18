@@ -160,7 +160,7 @@ double ReferenceCalcAGBNPForceKernel::executeGVolSA(ContextImpl& context, bool i
     vector<RealVec>& pos = extractPositions(context);
     vector<RealVec>& force = extractForces(context);
     RealOpenMM energy = 0.0;
-    int verbose_level = 1;
+    int verbose_level = 0;
     int init = 0; 
 
     vector<RealOpenMM> nu(numParticles);
@@ -764,7 +764,7 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
   vector<RealVec>& pos = extractPositions(context);
   vector<RealVec>& force = extractForces(context);
   RealOpenMM energy = 0.0;
-  int verbose_level = 0;
+  int verbose_level = 1;
   bool verbose = verbose_level > 0;
   
   if(verbose_level > 0) {
@@ -806,13 +806,9 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
   }
 
   
-  
-  for(int i = 0; i < numParticles; i++){
-    RealOpenMM rad = radii_vdw[i];
-    RealOpenMM vol = (4./3.)*M_PI*rad*rad*rad;
-    volume_scaling_factor[i] = self_volume_large[i]/vol;
-    if(verbose_level > 3){
-      cout << "SV " << i << " " << self_volume_large[i] << endl;
+  if(verbose_level > 3){  
+    for(int i = 0; i < numParticles; i++){
+      cout << "SVlrg " << i << " " << self_volume_large[i] << endl;
     }
   }
 
@@ -845,6 +841,12 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
     cout << "Atom Surface area energy: " << vol_energy1 + vol_energy2 << endl;
   }
 
+  if(verbose_level > 0){
+    for(int i = 0; i < numParticles; i++){ 
+      cout << "SVvdW " << i << " " << self_volume_vdw[i] << endl;
+    }
+  }
+  
   //constructs molecular surface particles (small radii only)
   vector<MSParticle> msparticles1;
   double radw = solvent_radius;
@@ -1028,6 +1030,18 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
   }
 
 
+  if(verbose_level > 0){
+    //compute volume of ms spheres so far
+    double volms_vdw = 0.;
+    for (int i = 0; i<msparticles2.size(); i++){
+      volms_vdw += msparticles2[i].vol_vdw;
+      cout << "VMX: " << i << " " << msparticles2[i].vol0 << " " << msparticles2[i].vol_vdw << endl;
+    }     
+    cout << "volms_vdw(ref): "  << volms_vdw << endl;
+  }
+  
+
+  
   //MS Vdw radii
   int num_ms = msparticles2.size();
   vector<RealOpenMM> radii_ms(num_ms);
@@ -1246,7 +1260,7 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
       svadd[jat] += 0.5*selfvols_ms[ims];
     }
     
-    if(verbose_level > 2){
+    if(verbose_level > 0){
       cout << "Updated Self Volumes:" << endl;
       for(int iat=0;iat<numParticles;iat++){
 	double r = 0.;
@@ -1255,7 +1269,7 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
 	}
 	RealOpenMM rad = radii_vdw[iat];
 	RealOpenMM vol = (4./3.)*M_PI*rad*rad*rad;
-	cout << "SV " <<  iat << " " << self_volume_vdw[iat] << " " << self_volume_vdw[iat]+svadd[iat] << " " << r << " " << self_volume_vdw[iat]/vol << endl;
+	cout << "SVms " <<  iat << " " << self_volume_vdw[iat] << " " << self_volume_vdw[iat]+svadd[iat] << " " << r << " " << self_volume_vdw[iat]/vol << endl;
       }
     }
     

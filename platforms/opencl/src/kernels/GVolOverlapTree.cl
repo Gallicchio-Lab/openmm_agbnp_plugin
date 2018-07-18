@@ -70,6 +70,7 @@ __kernel void InitOverlapTree_1body(
 
     __global       int*   restrict ovLevel, //this and below define tree
     __global       real*  restrict ovVolume,
+    __global       real*  restrict ovVsp,
     __global       real*  restrict ovVSfp,
     __global       real*  restrict ovGamma1i,
     __global       real4* restrict ovG,
@@ -101,6 +102,7 @@ __kernel void InitOverlapTree_1body(
       int slot = ovAtomTreePointer[atom];
       ovLevel[slot] = 1;
       ovVolume[slot] = v;
+      ovVsp[slot] = 1;
       ovVSfp[slot] = 1;
       ovGamma1i[slot] = g;
       ovG[slot] = (real4)(c.xyz,a);
@@ -496,6 +498,7 @@ __kernel void InitOverlapTree(
 #endif
     __global       int*  restrict ovLevel, //this and below define tree
     __global       real* restrict ovVolume,
+    __global       real* restrict ovVsp,
     __global       real* restrict ovVSfp,
     __global       real* restrict ovGamma1i,
     __global       real4* restrict ovG,
@@ -715,6 +718,7 @@ void InitOverlapTree_cpu(
 #endif
     __global       int*  restrict ovLevel, //this and below define tree
     __global       real* restrict ovVolume,
+    __global       real* restrict ovVsp,
     __global       real* restrict ovVSfp,
     __global       real* restrict ovGamma1i,
     __global       real4* restrict ovG,
@@ -1092,7 +1096,6 @@ void reduceovCountBuffer(const int ntrees,
 
 }
 
-
 // insertion sort
 inline void sortVolumes2body(
 		        unsigned          const int            idx,
@@ -1194,6 +1197,7 @@ __kernel __attribute__((reqd_work_group_size(OV_WORK_GROUP_SIZE,1,1)))
    __global const real* restrict global_atomic_gamma, //atomic Gaussian prefactor
    __global       int*  restrict ovLevel, //this and below define tree
    __global       real* restrict ovVolume,
+   __global       real* restrict ovVsp,
    __global       real* restrict ovVSfp,
    __global       real* restrict ovGamma1i,
    __global       real4* restrict ovG,
@@ -1209,7 +1213,7 @@ __kernel __attribute__((reqd_work_group_size(OV_WORK_GROUP_SIZE,1,1)))
    __global        int*  restrict ovChildrenCountTop,
    __global        int*  restrict ovChildrenCountBottom,
    // temporary buffers
-   unsigned const int buffer_size,
+                 unsigned const int buffer_size,//assume buffer_size/ntrees = multiple of group size
    __global       real*  restrict gvol_buffer,
    __global       uint*  restrict tree_pos_buffer, // where to store in tree
    __global       int*   restrict i_buffer,
@@ -1229,13 +1233,13 @@ __kernel __attribute__((reqd_work_group_size(OV_WORK_GROUP_SIZE,1,1)))
   __local volatile uint panic;//flag to interrupt calculation
   __local volatile uint n_buffer; //how many overlaps in buffer to process
   __local volatile uint buffer_pos[OV_WORK_GROUP_SIZE]; //where to store in temp. buffers
-  __local volatile uint parent1_buffer[OV_WORK_GROUP_SIZE]; //tree slot of "i" overlap
-  __local volatile uint level1_buffer[OV_WORK_GROUP_SIZE]; //overlap level of of "i" overlap
+  __local volatile int parent1_buffer[OV_WORK_GROUP_SIZE]; //tree slot of "i" overlap
+  __local volatile int level1_buffer[OV_WORK_GROUP_SIZE]; //overlap level of of "i" overlap
   __local volatile real4 posq1_buffer[OV_WORK_GROUP_SIZE]; //position of "i" overlap
   __local volatile real a1_buffer[OV_WORK_GROUP_SIZE]; //a parameter of "i" overlap
   __local volatile real v1_buffer[OV_WORK_GROUP_SIZE]; //volume of "i" overlap
   __local volatile real gamma1_buffer[OV_WORK_GROUP_SIZE]; //gamma parameter of "i" overlap
-  __local volatile uint children_count[OV_WORK_GROUP_SIZE]; //number of children
+  __local volatile int children_count[OV_WORK_GROUP_SIZE]; //number of children
 
   if(local_id == 0) panic = PanicButton[0];
   barrier(CLK_LOCAL_MEM_FENCE);
@@ -1286,8 +1290,12 @@ __kernel __attribute__((reqd_work_group_size(OV_WORK_GROUP_SIZE,1,1)))
 	
 	//  step 2: compute buffer pointers and number of overlaps
 	uint ov_count = 0;
-	int sibling_start = ovChildrenStartIndex[parent];
-	int sibling_count = ovChildrenCount[parent];
+	int sibling_start = 0;
+	int sibling_count = 0;
+	if(letsgo){
+	  sibling_start = ovChildrenStartIndex[parent];
+	  sibling_count = ovChildrenCount[parent];
+	}
 	int my_sibling_idx = slot - sibling_start;
 	if(letsgo){
 	  // store number of interactions, that is the number" of younger" siblings,
@@ -1389,6 +1397,7 @@ __kernel __attribute__((reqd_work_group_size(OV_WORK_GROUP_SIZE,1,1)))
 	      COMPUTE_INTERACTION_OTHER
 	      ovLevel[endslot] = level;
 	      ovVolume[endslot] = gvol;
+	      ovVsp[endslot] = s;
 	      ovVSfp[endslot] = sfp;
 	      ovGamma1i[endslot] = gamma1 + gamma2;
 	      ovLastAtom[endslot] = atom2;
@@ -1552,6 +1561,7 @@ void RescanOverlapTree(const int ntrees,
    __global const real* restrict global_atomic_gamma, //atomic gamma
    __global const int*  restrict ovLevel, //this and below define tree
    __global       real* restrict ovVolume,
+   __global       real* restrict ovVsp,
    __global       real* restrict ovVSfp,
    __global       real* restrict ovGamma1i,
    __global       real4* restrict ovG,

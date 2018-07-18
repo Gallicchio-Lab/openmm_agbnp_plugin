@@ -78,6 +78,7 @@ void resetTreeSection(
 		      unsigned const int offset,
 		      __global       int*   restrict ovLevel,
 		      __global       real*  restrict ovVolume,
+		      __global       real*  restrict ovVsp,
 		      __global       real*  restrict ovVSfp,
 		      __global       real*  restrict ovSelfVolume,
 		      __global       double* restrict ovVolEnergy,
@@ -97,6 +98,7 @@ void resetTreeSection(
   unsigned int end  = offset + padded_tree_size;
 
   for(int slot=begin; slot<end ; slot+=nblock) ovLevel[slot] = 0;
+  for(int slot=begin; slot<end ; slot+=nblock) ovVsp[slot] = 1;
   for(int slot=begin; slot<end ; slot+=nblock) ovVSfp[slot] = 1;
   for(int slot=begin; slot<end ; slot+=nblock) ovSelfVolume[slot] = 0;
   for(int slot=begin; slot<end ; slot+=nblock) ovVolEnergy[slot] = 0;
@@ -123,7 +125,7 @@ __kernel void resetBuffer(unsigned const int             bufferSize,
 ){
   unsigned int id = get_global_id(0);
 #ifdef SUPPORTS_64_BIT_ATOMICS
-  while (id < PADDED_NUM_ATOMS){
+  while (id < bufferSize){
     selfVolumeBuffer_long[id] = 0;
     id += get_global_size(0);
   }
@@ -145,6 +147,7 @@ __kernel void resetTree(const int ntrees,
 			__global const int*   restrict ovAtomTreePaddedSize,
 			__global       int*   restrict ovLevel,
 			__global       real*  restrict ovVolume,
+			__global       real*  restrict ovVsp,
 			__global       real*  restrict ovVSfp,
 			__global       real*  restrict ovSelfVolume,
 			__global       double*  restrict ovVolEnergy,
@@ -158,9 +161,7 @@ __kernel void resetTree(const int ntrees,
 			__global       int*  restrict ovProcessedFlag,
 			__global       int*  restrict ovOKtoProcessFlag,
 			__global       int*  restrict ovChildrenReported,
-			__global       int*  restrict ovAtomTreeLock,
-
-			__global const int*   restrict ishydrogenParam //1=hydrogen atom
+			__global       int*  restrict ovAtomTreeLock
 			){
 
 
@@ -173,6 +174,7 @@ __kernel void resetTree(const int ntrees,
     resetTreeSection(padded_tree_size, offset, 
 		     ovLevel,
 		     ovVolume,
+		     ovVsp,
 		     ovVSfp,
 		     ovSelfVolume,
 		     ovVolEnergy,

@@ -15,10 +15,12 @@ void computeSelfVolumes(const int ntrees,
   __global const int* restrict ovAtomTreePaddedSize,
   
   __global const real* restrict global_gaussian_exponent, //atomic Gaussian exponent
-  
-  
+
+  const int padded_num_atoms,
+
   __global const int*   restrict ovLevel,
   __global const real*  restrict ovVolume,
+  __global const real*  restrict ovVsp,
   __global const real*  restrict ovVSfp,
   __global const real*  restrict ovGamma1i,
   __global const real4* restrict ovG,
@@ -51,7 +53,7 @@ void computeSelfVolumes(const int ntrees,
   uint tree = get_group_id(0);      //index of initial tree
   while(tree < ntrees){
     uint offset = ovTreePointer[tree]; //offset into tree
-    uint buffer_offset = tree*PADDED_NUM_ATOMS; // offset into buffer arrays
+    uint buffer_offset = tree*padded_num_atoms; // offset into buffer arrays
 
     uint tree_size = ovAtomTreeSize[tree];
     uint padded_tree_size = ovAtomTreePaddedSize[tree];    
@@ -97,8 +99,8 @@ void computeSelfVolumes(const int ntrees,
 	  real volcoeffp = level > 0 ? volcoeff/(float)level : 0;
 	  
 	  //"own" volume contribution (volcoeff[level=0] for top root is automatically zero)
-	  real self_volume = volcoeffp*ovVolume[slot];
-	  double energy = volcoeffp*ovGamma1i[slot]*ovVolume[slot];
+	  real self_volume = volcoeffp*ovVsp[slot]*ovVolume[slot];
+	  double energy = ovGamma1i[slot]*self_volume;
 	  
 	  //gather self volumes and derivatives from children
 	  //dv.w is the gradient of the energy
@@ -107,7 +109,7 @@ void computeSelfVolumes(const int ntrees,
 	  int count = ovChildrenCount[slot];
 	  if(count > 0 && start >= 0){
 	    for(int j=start; j < start+count ; j++){
-	      if(ovLastAtom[j] >= 0 && ovLastAtom[j] < NUM_ATOMS_TREE){
+	      if(ovLastAtom[j] >= 0){// && ovLastAtom[j] < NUM_ATOMS_TREE){
 		energy += ovVolEnergy[j];
 		self_volume += ovSelfVolume[j];
 		dv1 += ovPF[j];	     
@@ -129,6 +131,7 @@ void computeSelfVolumes(const int ntrees,
 	  real a1 = a1i - an;
 	  real dvvc = dv1.w;
 	  ovDV2[slot].xyz = -ovDV1[slot].xyz * dvvc  + (an/a1i)*dv1.xyz; //this gets accumulated later
+	  //ovDV2[slot].w = dvvc *  ovDV1[slot].w;//for derivative wrt volumei
 	  ovPF[slot].xyz =  ovDV1[slot].xyz * dvvc  + (a1/a1i)*dv1.xyz;
 	  ovPF[slot].w   =  ovDV1[slot].w   * dvvc;
 	  
@@ -153,11 +156,11 @@ void computeSelfVolumes(const int ntrees,
       // Updates energy and derivative buffer for this section
       barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);
 #ifdef SUPPORTS_64_BIT_ATOMICS
-      if(atom >= 0 && atom < NUM_ATOMS_TREE){
+      if(atom >= 0){// && atom < NUM_ATOMS_TREE){
 	real4 dv2 = -ovDV2[slot];
 	atom_add(&forceBuffers[atom], (long) (dv2.x*0x100000000));
-	atom_add(&forceBuffers[atom+PADDED_NUM_ATOMS], (long) (dv2.y*0x100000000));
-	atom_add(&forceBuffers[atom+2*PADDED_NUM_ATOMS], (long) (dv2.z*0x100000000));
+	atom_add(&forceBuffers[atom+padded_num_atoms], (long) (dv2.y*0x100000000));
+	atom_add(&forceBuffers[atom+2*padded_num_atoms], (long) (dv2.z*0x100000000));
 	atom_add(&selfVolumeBuffer_long[atom], (long) (ovSelfVolume[slot]*0x100000000));
 	// nothing to do here for the volume energy,
 	// it is automatically stored in ovVolEnergy at the 1-body level
@@ -170,7 +173,7 @@ void computeSelfVolumes(const int ntrees,
 	uint tree_offset =  offset + isection*gsize;
 	for(uint is = tree_offset ; is < tree_offset + gsize ; is++){ //loop over slots in section
 	  int at = ovLastAtom[is];
-	  if(at >= 0 && at < NUM_ATOMS_TREE){
+	  if(at >= 0){// && at < NUM_ATOMS_TREE){
 	    // nothing to do here for the volume energy,
 	    // it is automatically stored in ovVolEnergy at the 1-body level
 	    ovAtomBuffer[buffer_offset + at] += (real4)(ovDV2[is].xyz, 0); //.w element was used to store the energy
@@ -203,6 +206,7 @@ void computeVolumeEnergy(const int ntrees,
   
   __global const int*   restrict ovLevel,
   __global const real*  restrict ovVolume,
+  __global const real*  restrict ovVsp,
   __global const real*  restrict ovVSfp,
   __global const real*  restrict ovGamma1i,
   __global const real4* restrict ovG,
@@ -277,7 +281,7 @@ void computeVolumeEnergy(const int ntrees,
 	  real volcoeffp = level > 0 ? volcoeff/(float)level : 0;
 	  
 	  //"own" volume contribution (volcoeff[level=0] for top root is automatically zero)
-	  double energy = volcoeffp*ovGamma1i[slot]*ovVolume[slot];
+	  double energy = volcoeffp*ovGamma1i[slot]*ovVsp[slot]*ovVolume[slot];
 	  
 	  //gather self volumes and derivatives from children
 	  //dv.w is the gradient of the energy
