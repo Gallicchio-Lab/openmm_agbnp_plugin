@@ -10,7 +10,7 @@ Implementation of the AGBNP2 model [2] is in progress.
 
 Emilio Gallicchio <egallicchio@brooklyn.cuny.edu>
 
-Last Modified: January 2018
+Last Modified: November 2018
 
 
 ## License
@@ -25,6 +25,11 @@ Support from the National Science Foundation (ACI 1440665) is acknowledged.
 
 The plugin interface is based on the [openmmexampleplugin](https://github.com/peastman/openmmexampleplugin) by Peter Eastman.
 
+
+## Rquirements
+
+Requires OpenMM 7.2.2 or later. Last tested with OpenMM 7.2.2.
+
 ## Installation
 
 These instructions assume Linux. Install OpenMM 7; the easiest is through `miniconda` using [these instructions](https://simtk.org/frs/download_start.php/file/4907/Conda%20installation%20instruction?group_id=161). Install `swig` through `conda` as well:
@@ -33,7 +38,7 @@ These instructions assume Linux. Install OpenMM 7; the easiest is through `minic
 conda install -c omnia openmm swig
 ```
 
-Locate the OpenMM installation directory, otherwise it will default to `/usr/local/openmm`. If OpenMM was installed via `conda` the OpenMM installation directory will be something like `$HOME/miniconda2/pkgs/openmm-7.0.1-py27_0`
+Locate the OpenMM installation directory, otherwise it will default to `/usr/local/openmm`. If OpenMM was installed via `conda` the OpenMM installation directory will be something like `$HOME/miniconda2/pkgs/openmm-7.2.2-py27_0`
 
 Download this plugin package from github:
 
