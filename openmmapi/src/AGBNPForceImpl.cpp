@@ -30,7 +30,9 @@ void AGBNPForceImpl::initialize(ContextImpl& context) {
 }
 
 double AGBNPForceImpl::calcForcesAndEnergy(ContextImpl& context, bool includeForces, bool includeEnergy, int groups) {
-  return kernel.getAs<CalcAGBNPForceKernel>().execute(context, includeForces, includeEnergy);
+  if ((groups&(1<<owner.getForceGroup())) != 0)
+    return kernel.getAs<CalcAGBNPForceKernel>().execute(context, includeForces, includeEnergy);
+  return 0.0;
 }
 
 std::vector<std::string> AGBNPForceImpl::getKernelNames() {
