@@ -29,6 +29,7 @@ public:
     radtypeScreener = NULL;
     
     selfVolume = NULL;
+    selfVolumeLargeR = NULL;
     Semaphor = NULL;
     volScalingFactor = NULL;
     BornRadius = NULL;
@@ -42,9 +43,13 @@ public:
     
     GaussianExponent = NULL;
     GaussianVolume = NULL;
-
+    GaussianExponentLargeR = NULL;
+    GaussianVolumeLargeR = NULL;
+    
     AtomicGamma = NULL;
-
+    grad = NULL;
+	
+    
     i4_lut = NULL;    
     i4YValues = NULL;
     i4Y2Values = NULL;
@@ -58,8 +63,6 @@ public:
     do_ms = false;
     MSparticle1 = NULL;
     MSparticle2 = NULL;
-
-    MSLongForceBuffer = NULL;
     
     MScount1 = NULL;
     MScount2 = NULL;
@@ -129,7 +132,8 @@ public:
 	AccumulationBuffer1_real = NULL;
 	AccumulationBuffer2_long = NULL;
 	AccumulationBuffer2_real = NULL;
-
+	gradBuffers_long = NULL;
+	
 	temp_buffer_size = -1;
 	gvol_buffer_temp = NULL;
 	tree_pos_buffer_temp = NULL;
@@ -180,7 +184,8 @@ public:
 	delete AccumulationBuffer1_real;
 	delete AccumulationBuffer2_long;
 	delete AccumulationBuffer2_real;
-
+	delete gradBuffers_long;
+	
 	delete gvol_buffer_temp;
 	delete tree_pos_buffer_temp;
 	delete i_buffer_temp;
@@ -252,6 +257,7 @@ public:
       OpenMM::OpenCLArray* AccumulationBuffer1_real;
       OpenMM::OpenCLArray* AccumulationBuffer2_long;
       OpenMM::OpenCLArray* AccumulationBuffer2_real;
+      OpenMM::OpenCLArray* gradBuffers_long;
       
       int temp_buffer_size;
       OpenMM::OpenCLArray*  gvol_buffer_temp;
@@ -289,6 +295,7 @@ public:
 	MSpGaussExponent =    OpenCLArray::create<cl_float>(cl, size, "MSpGaussExponent");
 	MSpGamma =    OpenCLArray::create<cl_float>(cl, size, "MSpGamma");
 	MSpSelfVolume = OpenCLArray::create<cl_float>(cl, size, "MSpSelfVolume");
+	MSgrad = OpenCLArray::create<mm_float4>(cl, size, "MSgrad");
 	MSsemaphor =  OpenCLArray::create<cl_int>(cl, size, "MSsemaphor");
 	vector<int> zeros(size);
 	for(int i=0; i<size; i++) zeros[i] = 0;
@@ -314,6 +321,7 @@ public:
 	delete MSpGaussExponent;
 	delete MSpGamma;
 	delete MSpSelfVolume;
+	delete MSgrad;
 	delete MSsemaphor;
       };
 
@@ -339,6 +347,7 @@ public:
 	  delete MSpGaussExponent;
 	  delete MSpGamma;
 	  delete MSpSelfVolume;
+	  delete MSgrad;
 	  delete MSsemaphor;
 	  MSptr =       OpenCLArray::create<cl_int>(cl, size, "MSptr");
 	  MSpVol0 =     OpenCLArray::create<cl_float>(cl, size, "MSpVol0");
@@ -357,6 +366,7 @@ public:
 	  MSpGaussExponent =    OpenCLArray::create<cl_float>(cl, size, "MSpGaussExponent");
 	  MSpGamma =    OpenCLArray::create<cl_float>(cl, size, "MSpGamma");
 	  MSpSelfVolume = OpenCLArray::create<cl_float>(cl, size, "MSpSelfVolume");
+	  MSgrad = OpenCLArray::create<mm_float4>(cl, size, "MSgrad");
 	  MSsemaphor =  OpenCLArray::create<cl_int>(cl, size, "MSsemaphor");
 	  vector<int> zeros(size);
 	  for(int i=0; i<size; i++) zeros[i] = 0;
@@ -387,6 +397,7 @@ public:
       OpenMM::OpenCLArray* MSpGaussExponent;
       OpenMM::OpenCLArray* MSpGamma;
       OpenMM::OpenCLArray* MSpSelfVolume;
+      OpenMM::OpenCLArray* MSgrad;
       OpenMM::OpenCLArray* MSsemaphor;
     };//class OpenCLMSParticle
 
@@ -401,6 +412,7 @@ private:
     bool useExclusions;
     double cutoffDistance;
     double roffset;
+    float common_gamma;
     int maxTiles;
     bool hasInitializedKernels;
     bool hasCreatedKernels;
@@ -436,7 +448,8 @@ private:
     OpenMM::OpenCLArray* radtypeScreened;
     OpenMM::OpenCLArray* radtypeScreener;
     
-    OpenMM::OpenCLArray* selfVolume;
+    OpenMM::OpenCLArray* selfVolume; //vdw radii
+    OpenMM::OpenCLArray* selfVolumeLargeR; //large radii
     OpenMM::OpenCLArray* Semaphor;
     OpenMM::OpenCLArray* volScalingFactor;
     OpenMM::OpenCLArray* BornRadius;
@@ -447,10 +460,7 @@ private:
     OpenMM::OpenCLArray* GBDerU;
     OpenMM::OpenCLArray* VdWDerBrW;
     OpenMM::OpenCLArray* VdWDerW;
-    
-    
-    
-
+    OpenMM::OpenCLArray* grad;
 
     cl::Kernel resetBufferKernel;
     cl::Kernel resetOvCountKernel;
@@ -462,6 +472,17 @@ private:
     cl::Kernel InitOverlapTreeCountKernel;
     int InitOverlapTreeCountKernel_first_nbarg;
 
+    int reduceSelfVolumesSVArgIndex;
+    int InitOverlapTreeKernel_1body_1_GaArgIndex;
+    int InitOverlapTreeKernel_1body_1_GvArgIndex;
+    int InitOverlapTreeCountKernelGaArgIndex;
+    int InitOverlapTreeCountKernelGvArgIndex;
+    int InitOverlapTreeKernelGaArgIndex;
+    int InitOverlapTreeKernelGvArgIndex;
+    int ComputeOverlapTree_1passGaArgIndex;
+    int ComputeOverlapTree_1passGvArgIndex;
+    int computeSelfVolumesGaArgIndex;
+    
     
     cl::Kernel reduceovCountBufferKernel;
     
@@ -473,6 +494,8 @@ private:
     cl::Kernel computeSelfVolumesKernel;
     cl::Kernel reduceSelfVolumesKernel_tree;
     cl::Kernel reduceSelfVolumesKernel_buffer;
+    cl::Kernel updateSelfVolumesForcesKernel;
+
     cl::Kernel resetTreeKernel;
     cl::Kernel SortOverlapTree2bodyKernel;
     cl::Kernel resetComputeOverlapTreeKernel;
@@ -481,13 +504,15 @@ private:
     cl::Kernel RescanOverlapTreeKernel;
     cl::Kernel RescanOverlapTreeGammasKernel_W;
     cl::Kernel InitOverlapTreeGammasKernel_1body_W;
-    cl::Kernel computeVolumeEnergyKernel;
+    //cl::Kernel computeVolumeEnergyKernel;
 
     /* Gaussian atomic parameters */
     vector<float> gaussian_exponent;
     vector<float> gaussian_volume;
     OpenMM::OpenCLArray* GaussianExponent;
     OpenMM::OpenCLArray* GaussianVolume;
+    OpenMM::OpenCLArray* GaussianExponentLargeR;
+    OpenMM::OpenCLArray* GaussianVolumeLargeR;
     /* gamma parameters */
     vector<float> atomic_gamma;
     OpenMM::OpenCLArray* AtomicGamma;
@@ -568,12 +593,10 @@ private:
     cl::Kernel MSresetSelfVolumesKernel;
     cl::Kernel MScomputeSelfVolumesKernel;
     cl::Kernel MSreduceSelfVolumesKernel_buffer;
+    cl::Kernel MSupdateSelfVolumesForcesKernel;
     cl::Kernel MSaddSelfVolumesKernel;
     cl::Kernel MSaddSelfVolumesFromLongKernel;
 
-    
-    OpenMM::OpenCLArray* MSLongForceBuffer;
-    
     OpenMM::OpenCLArray* MScount1;
     OpenMM::OpenCLArray* MScount2;
     

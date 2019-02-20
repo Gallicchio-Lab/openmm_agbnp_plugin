@@ -81,7 +81,7 @@ void resetTreeSection(
 		      __global       real*  restrict ovVsp,
 		      __global       real*  restrict ovVSfp,
 		      __global       real*  restrict ovSelfVolume,
-		      __global       double* restrict ovVolEnergy,
+		      __global       real*  restrict ovVolEnergy,
 		      __global       int*   restrict ovLastAtom,
 		      __global       int*   restrict ovRootIndex,
 		      __global       int*   restrict ovChildrenStartIndex,
@@ -120,13 +120,19 @@ __kernel void resetBuffer(unsigned const int             bufferSize,
 			  __global        real* restrict selfVolumeBuffer
 #ifdef SUPPORTS_64_BIT_ATOMICS
 			  ,
-			  __global long*   restrict selfVolumeBuffer_long
+			  __global long*   restrict selfVolumeBuffer_long,
+			  __global long*   restrict gradBuffers_long
+
 #endif
 ){
   unsigned int id = get_global_id(0);
 #ifdef SUPPORTS_64_BIT_ATOMICS
   while (id < bufferSize){
     selfVolumeBuffer_long[id] = 0;
+    gradBuffers_long[id             ] = 0;
+    gradBuffers_long[id+  bufferSize] = 0;
+    gradBuffers_long[id+2*bufferSize] = 0;
+    gradBuffers_long[id+3*bufferSize] = 0;
     id += get_global_size(0);
   }
 #else
@@ -150,7 +156,7 @@ __kernel void resetTree(const int ntrees,
 			__global       real*  restrict ovVsp,
 			__global       real*  restrict ovVSfp,
 			__global       real*  restrict ovSelfVolume,
-			__global       double*  restrict ovVolEnergy,
+			__global       real*  restrict ovVolEnergy,
 			__global       int*   restrict ovLastAtom,
 			__global       int*   restrict ovRootIndex,
 			__global       int*   restrict ovChildrenStartIndex,
@@ -161,7 +167,9 @@ __kernel void resetTree(const int ntrees,
 			__global       int*  restrict ovProcessedFlag,
 			__global       int*  restrict ovOKtoProcessFlag,
 			__global       int*  restrict ovChildrenReported,
-			__global       int*  restrict ovAtomTreeLock
+			__global       int*  restrict ovAtomTreeLock,
+			__global       int*  restrict NIterations
+			
 			){
 
 
@@ -188,7 +196,10 @@ __kernel void resetTree(const int ntrees,
 		     ovOKtoProcessFlag,
 		     ovChildrenReported
 		     );
-    ovAtomTreeLock[section] = 0;
+    if(get_local_id(0) == 0){
+      ovAtomTreeLock[section] = 0;
+      NIterations[section] = 0;
+    }
     section += get_num_groups(0); //next section  
   }
 }

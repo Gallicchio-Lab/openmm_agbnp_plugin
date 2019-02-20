@@ -325,7 +325,11 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool i
       cout << "Number of overlaps: " << nn << endl;
     }
 
-
+    if(verbose_level > 0){
+      for(int i = 0; i < numParticles; i++){
+	cout << "FrcEV1 : " << i << " " << vol_force[i][0] << " " << vol_force[i][1] << " " << vol_force[i][2] << endl;
+      }
+    }
 
     
     //returns energy and gradients from volume energy function
@@ -377,6 +381,12 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool i
     if(verbose_level > 0){
       cout << "Volume energy 2: " << vol_energy2 << endl;
       cout << "Surface area energy: " << vol_energy1 + vol_energy2 << endl;
+    }
+
+    if(verbose_level > 0){
+      for(int i = 0; i < numParticles; i++){
+	cout << "FrcEV2 : " << i << " " << vol_force[i][0] << " " << vol_force[i][1] << " " << vol_force[i][2] << endl;
+      }
     }
     
     //now overlap tree is set up with small radii
@@ -693,7 +703,14 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool i
     }
 #endif
 
-
+    vector<RealVec> forceGBV;
+    if(verbose_level > 0){
+      forceGBV.resize(numParticles);
+      for(int i = 0; i < numParticles; i++){
+	forceGBV[i] = RealVec(0,0,0);
+      }
+    }
+	  
     RealOpenMM volume_tmp, vol_energy_tmp;
     //set up the parameters of the pseudo-volume energy function and
     //compute the component of the gradient of Evdw due to the variations
@@ -709,6 +726,12 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool i
       force[i] += vol_force[i] * w_vdw;
     }
 
+    if(verbose_level > 0){
+      for(int i = 0; i < numParticles; i++){
+	forceGBV[i] += vol_force[i] * w_vdw;
+      }
+    }
+    
     //set up the parameters of the pseudo-volume energy function and
     //compute the component of the gradient of Egb due to the variations
     //of self volumes
@@ -723,6 +746,20 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP1(ContextImpl& context, bool i
       force[i] += vol_force[i] * w_egb;
     }
 
+    if(verbose_level > 0){
+      for(int i = 0; i < numParticles; i++){
+	forceGBV[i] += vol_force[i] * w_vdw;
+      }
+    }
+
+
+    if(verbose_level > 0){
+      for(int i = 0; i < numParticles; i++){
+	cout << "FrcGBV : " << i << " " << forceGBV[i][0] << " " << forceGBV[i][1] << " " << forceGBV[i][2] << endl;
+      }
+    }
+
+    
 
     if(verbose_level > 3){
       //creates input for test program
@@ -801,8 +838,8 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
   }
 
   if(verbose_level > 0){
-      cout << "vol 1: " << volume1 << endl;
-      cout << "energy 1: " << vol_energy1 << endl;
+      cout << "    vol 1: " << volume1 << endl;
+      cout << "  Volume Energy 1: " << vol_energy1 << endl;
   }
 
   
@@ -837,15 +874,23 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
   }
   energy += vol_energy2 * w_evol;
   if(verbose_level > 0){
-    cout << "Volume energy 2: " << vol_energy2 << endl;
-    cout << "Atom Surface area energy: " << vol_energy1 + vol_energy2 << endl;
+    cout << "  Volume Energy 2: " << vol_energy2 << endl;
+    cout << "Atom Surface area Energy: " << vol_energy1 + vol_energy2 << endl;
   }
 
-  if(verbose_level > 0){
+  if(verbose_level > 1){
     for(int i = 0; i < numParticles; i++){ 
       cout << "SVvdW " << i << " " << self_volume_vdw[i] << endl;
     }
   }
+
+  if(verbose_level > 1){
+    //print gradients
+    for(int i = 0; i < numParticles; i++){
+      cout << "FrcEV2 : " << i << " " << vol_force[i][0] << " " << vol_force[i][1] << " " << vol_force[i][2] << " " << -vol_dv[i] << endl;
+    }
+  }
+
   
   //constructs molecular surface particles (small radii only)
   vector<MSParticle> msparticles1;
@@ -1030,7 +1075,7 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
   }
 
 
-  if(verbose_level > 0){
+  if(verbose_level > 1){
     //compute volume of ms spheres so far
     double volms_vdw = 0.;
     for (int i = 0; i<msparticles2.size(); i++){
@@ -1082,10 +1127,19 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
 
     
     if(verbose_level > 0){
-      cout << "vol_ms vdw: " << vol_ms2 << endl;
-      cout << "energy_ms vdw: " << energy_ms2 << endl;
+      cout << "    vol_ms vdw: " << vol_ms2 << endl;
+      cout << "Energy MS small radii: " << energy_ms2 << endl;
     }
 
+    if(verbose_level > 1){
+      //print gradients
+      for(int i = 0; i < num_ms; i++){
+	cout << "FrcVMS : " << i << " " << forces_ms[i][0] << " " << forces_ms[i][1] << " " << forces_ms[i][2] << " " << -vol_dv_ms[i] << endl;
+      }
+    }
+
+
+    
 #ifdef NOTNOW
     //test of forces_ms
     vector<RealVec> forces_ms2(num_ms);
@@ -1260,7 +1314,7 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
       svadd[jat] += 0.5*selfvols_ms[ims];
     }
     
-    if(verbose_level > 0){
+    if(verbose_level > 1){
       cout << "Updated Self Volumes:" << endl;
       for(int iat=0;iat<numParticles;iat++){
 	double r = 0.;
@@ -1367,9 +1421,9 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
     }
   }
   if(verbose_level > 0){
-    cout << "GB self energy: " << gb_self_energy << endl;
-    cout << "GB pair energy: " << gb_pair_energy << endl;
-    cout << "GB energy: " << gb_pair_energy+gb_self_energy << endl;
+    cout << "  GB self Energy: " << gb_self_energy << endl;
+    cout << "  GB pair Energy: " << gb_pair_energy << endl;
+    cout << "GB Energy: " << gb_pair_energy+gb_self_energy << endl;
   }
   energy += w_egb*gb_pair_energy + w_egb*gb_self_energy;
   
@@ -1386,7 +1440,7 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
     evdw += vdw_alpha[i]/pow(born_radius[i]+AGBNP_HB_RADIUS,3);
   }
   if(verbose_level > 0){
-    cout << "Van der Waals energy: " << evdw << endl;
+    cout << "Van der Waals Energy: " << evdw << endl;
   }
   energy += w_vdw*evdw;
   
@@ -1629,8 +1683,8 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
     gvolms->compute_volume(pos_ms, vol_ms1, energy_ms1, forces_ms, vol_dv_ms, freevols_ms, selfvols_ms);
 
     if(verbose_level > 0){
-      cout << "vol_ms large radii: " << vol_ms1 << endl;
-      cout << "energy_ms large radii " << energy_ms1 << endl;
+      cout << "    vol_ms large radii: " << vol_ms1 << endl;
+      cout << "Energy MS large radii " << energy_ms1 << endl;
     }
 
 
@@ -1709,11 +1763,9 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
     
     
     if(verbose_level > 0){
-      cout << "vol_ms 2: " << vol_ms2 << endl;
-      cout << "energy_ms 2: " << energy_ms2 << endl;
-
-      cout << "MS Surface area energy: " << energy_ms1 + energy_ms2 << endl;
-      cout << "Total Surface area energy: " << vol_energy1 + vol_energy2 + energy_ms1 + energy_ms2 << endl;
+      cout << "    vol_ms 2: " << vol_ms2 << endl;
+      cout << "  MS Surface area Energy: " << energy_ms1 + energy_ms2 << endl;
+      cout << "  Total Surface area Energy: " << vol_energy1 + vol_energy2 + energy_ms1 + energy_ms2 << endl;
       
       cout << endl;
     }
@@ -1726,7 +1778,7 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
     
   
   //returns energy
-  if(verbose) cout << "energy: " << energy << endl;
+  if(verbose) cout << "Energy: " << energy << endl;
   return (double)energy;
 }
 

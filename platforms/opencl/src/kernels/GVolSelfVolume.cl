@@ -25,7 +25,7 @@ void computeSelfVolumes(const int ntrees,
   __global const real*  restrict ovGamma1i,
   __global const real4* restrict ovG,
   __global       real*  restrict ovSelfVolume,
-  __global       double*  restrict ovVolEnergy,
+  __global       real*  restrict ovVolEnergy,
 
   __global const real4* restrict ovDV1,
   __global       real4* restrict ovDV2,
@@ -40,7 +40,7 @@ void computeSelfVolumes(const int ntrees,
   __global       int*  restrict ovChildrenReported,
   __global     real4*  restrict ovAtomBuffer,
 #ifdef SUPPORTS_64_BIT_ATOMICS
-  __global      long*   restrict forceBuffers,
+  __global      long*   restrict gradBuffers_long,
   __global      long*   restrict selfVolumeBuffer_long,
 #endif
    __global      real*   restrict selfVolumeBuffer
@@ -103,13 +103,16 @@ void computeSelfVolumes(const int ntrees,
 	  double energy = ovGamma1i[slot]*self_volume;
 	  
 	  //gather self volumes and derivatives from children
-	  //dv.w is the gradient of the energy
+
+	  //dv1.xyz is (P)1..i in the paper
+	  //dv1.w   is (F)1..i in the paper
+	  //in relation to the gradient of the volume energy function
 	  real4 dv1 = (real4)(0,0,0,volcoeffp*ovVSfp[slot]*ovGamma1i[slot]);
 	  int start = ovChildrenStartIndex[slot];
 	  int count = ovChildrenCount[slot];
 	  if(count > 0 && start >= 0){
 	    for(int j=start; j < start+count ; j++){
-	      if(ovLastAtom[j] >= 0){// && ovLastAtom[j] < NUM_ATOMS_TREE){
+	      if(ovLastAtom[j] >= 0){
 		energy += ovVolEnergy[j];
 		self_volume += ovSelfVolume[j];
 		dv1 += ovPF[j];	     
@@ -129,9 +132,9 @@ void computeSelfVolumes(const int ntrees,
 	  real an = global_gaussian_exponent[atom];
 	  real a1i = ovG[slot].w;
 	  real a1 = a1i - an;
-	  real dvvc = dv1.w;
+	  real dvvc = dv1.w;//this is (F)1..i
 	  ovDV2[slot].xyz = -ovDV1[slot].xyz * dvvc  + (an/a1i)*dv1.xyz; //this gets accumulated later
-	  //ovDV2[slot].w = dvvc *  ovDV1[slot].w;//for derivative wrt volumei
+	  ovDV2[slot].w = ovVolume[slot] *  dvvc;//for derivative wrt volumei, gets divided by volumei later
 	  ovPF[slot].xyz =  ovDV1[slot].xyz * dvvc  + (a1/a1i)*dv1.xyz;
 	  ovPF[slot].w   =  ovDV1[slot].w   * dvvc;
 	  
@@ -156,11 +159,18 @@ void computeSelfVolumes(const int ntrees,
       // Updates energy and derivative buffer for this section
       barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);
 #ifdef SUPPORTS_64_BIT_ATOMICS
-      if(atom >= 0){// && atom < NUM_ATOMS_TREE){
-	real4 dv2 = -ovDV2[slot];
+      if(atom >= 0){
+	real4 dv2 = ovDV2[slot];
+	/*
 	atom_add(&forceBuffers[atom], (long) (dv2.x*0x100000000));
 	atom_add(&forceBuffers[atom+padded_num_atoms], (long) (dv2.y*0x100000000));
 	atom_add(&forceBuffers[atom+2*padded_num_atoms], (long) (dv2.z*0x100000000));
+	atom_add(&gradVBuffer_long[atom], (long) (-dv2.w*0x100000000));
+	*/
+	atom_add(&gradBuffers_long[atom                   ], (long) (dv2.x*0x100000000));
+	atom_add(&gradBuffers_long[atom+  padded_num_atoms], (long) (dv2.y*0x100000000));
+	atom_add(&gradBuffers_long[atom+2*padded_num_atoms], (long) (dv2.z*0x100000000));
+	atom_add(&gradBuffers_long[atom+3*padded_num_atoms], (long) (dv2.w*0x100000000));
 	atom_add(&selfVolumeBuffer_long[atom], (long) (ovSelfVolume[slot]*0x100000000));
 	// nothing to do here for the volume energy,
 	// it is automatically stored in ovVolEnergy at the 1-body level
@@ -173,10 +183,10 @@ void computeSelfVolumes(const int ntrees,
 	uint tree_offset =  offset + isection*gsize;
 	for(uint is = tree_offset ; is < tree_offset + gsize ; is++){ //loop over slots in section
 	  int at = ovLastAtom[is];
-	  if(at >= 0){// && at < NUM_ATOMS_TREE){
+	  if(at >= 0){
 	    // nothing to do here for the volume energy,
 	    // it is automatically stored in ovVolEnergy at the 1-body level
-	    ovAtomBuffer[buffer_offset + at] += (real4)(ovDV2[is].xyz, 0); //.w element was used to store the energy
+	    ovAtomBuffer[buffer_offset + at] += ovDV2[is];//xyz is position gradient, w is volume gradient
 	    selfVolumeBuffer[buffer_offset + at] += ovSelfVolume[is];
 	  }
 	}
@@ -191,7 +201,7 @@ void computeSelfVolumes(const int ntrees,
   }
 }
 
-
+#ifdef NOTNOW
 //same as self-volume kernel above but does not update self volumes
 __kernel __attribute__((reqd_work_group_size(OV_WORK_GROUP_SIZE,1,1)))
 void computeVolumeEnergy(const int ntrees,
@@ -210,7 +220,7 @@ void computeVolumeEnergy(const int ntrees,
   __global const real*  restrict ovVSfp,
   __global const real*  restrict ovGamma1i,
   __global const real4* restrict ovG,
-  __global       double*  restrict ovVolEnergy,
+  __global       real*  restrict ovVolEnergy,
 
   __global const real4* restrict ovDV1,
   __global       real4* restrict ovDV2,
@@ -364,3 +374,4 @@ void computeVolumeEnergy(const int ntrees,
     barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE);
   }
 }
+#endif
