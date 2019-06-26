@@ -3,7 +3,6 @@ from simtk.openmm import *
 from simtk.unit import *
 from sys import stdout
 import os, time, shutil
-from desmonddmsfile import *
 from datetime import datetime
 
 shutil.copyfile('hivrt_agbnp1.dms','hivrt_agbnp1-out.dms')

@@ -3,7 +3,6 @@ from simtk.openmm import *
 from simtk.unit import *
 from sys import stdout
 import os, time, shutil
-from desmonddmsfile import *
 from datetime import datetime
 
 shutil.copyfile('1li2_agbnp1.dms','1li2_agbnp1_out.dms')
