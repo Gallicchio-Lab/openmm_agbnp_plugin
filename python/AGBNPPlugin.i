@@ -32,7 +32,7 @@ import simtk.openmm as mm
 import simtk.unit as unit
 %}
 
-
+%include "AGBNPUtils.py"
 
 /*
  * Add units to function outputs.

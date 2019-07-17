@@ -10,7 +10,7 @@ add_custom_command(
         -o "${WRAP_FILE}"
         "-I${OPENMM_DIR}/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/AGBNPPlugin.i"
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/AGBNPPlugin.i"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/AGBNPPlugin.i" "${CMAKE_CURRENT_SOURCE_DIR}/AGBNPUtils.py"
     WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
 
