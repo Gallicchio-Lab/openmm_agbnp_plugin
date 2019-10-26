@@ -7,6 +7,9 @@
    by Douglas Coimbra de Andrade.
    occupied = 0 <- lock available
    occupied = 1 <- lock busy
+
+   I think they cause a deadlock on most devices when multiple threads in a warp try to acquire 
+   the same semaphor. Okay if only the master thread of the warp acquires the lock. 
   */
 void GetSemaphor(__global int * semaphor) {
    int occupied = atomic_xchg(semaphor, 1);
@@ -143,7 +146,8 @@ __kernel void MSParticles1Reset(int ntiles,
 				__global int* restrict MScount,
 				int size,
 				__global real* restrict MSpVol0,
-				__global real* restrict MSpVolvdW
+				__global real* restrict MSpVolvdW,
+				__global real* restrict MSpVolLarge
 				){
   uint id = get_global_id(0);
   while(id < ntiles){
@@ -154,6 +158,7 @@ __kernel void MSParticles1Reset(int ntiles,
   while(id < size){
     MSpVol0[id] = 0.f;
     MSpVolvdW[id] = 0.f;
+    MSpVolLarge[id] = 0.f;
     id += get_global_size(0);
   }
 }
@@ -933,11 +938,13 @@ __kernel void MSParticles1Vols(int const                 ntiles,
 			       int const                 MStile_size,
 			       __global const  int*  restrict MScount,
 			       __global const real*  restrict MSpVol0,
-			       __global       real*  restrict MSpVolvdW
+			       __global       real*  restrict MSpVolvdW,
+			       __global       real*  restrict MSpVolLarge
 			       ){
   uint id = get_global_id(0);
   while(id < ntiles*MStile_size){
-    real gvol = MSpVol0[id] - MSpVolvdW[id];
+    //from vdw radii
+    real gvol  = MSpVol0[id] - MSpVolvdW[id];
     if(gvol > VOLMINMSA){
       //switching function
       real s = 0, sp = 0;
@@ -958,11 +965,35 @@ __kernel void MSParticles1Vols(int const                 ntiles,
       gvol = 0.f;
     }
     MSpVolvdW[id] = gvol;
+    
+    //from large radii
+    gvol = MSpVol0[id] - MSpVolLarge[id];
+    if(gvol > VOLMINMSA){
+      //switching function
+      real s = 0, sp = 0;
+      if(gvol > VOLMINMSB ){
+	s = 1.0f;
+	sp = 0.0f;
+      }else{
+	real swd = 1.f/( VOLMINMSB - VOLMINMSA );
+	real swu = (gvol - VOLMINMSA)*swd;
+	real swu2 = swu*swu;
+	real swu3 = swu*swu2;
+	s = swu3*(10.f-15.f*swu+6.f*swu2);
+	sp = swd*30.f*swu2*(1.f - 2.f*swu + swu2);
+      }
+      // switching function end
+      gvol = s*gvol;
+    }else{
+      gvol = 0.f;
+    }
+    MSpVolLarge[id] = gvol;
+      
     id += get_global_size(0);
   }
 }
 
-/* counts number of non-zero volume MS particles in each tile */ 
+/* counts number of non-zero vdw volume MS particles in each tile */ 
 __kernel void MSParticles2Count(int const                 ntiles, 
 				int const                 MStile_size,
 				__global       int*  restrict MScount,
@@ -1034,7 +1065,7 @@ __kernel void MSInitOverlapTree_1body(
     int const                 MStile_size,
     __global const int*    restrict MScount,
     __global const int*    restrict MSptr,			       
-    __global const real*   restrict MSpVolvdW,
+    __global const real*   restrict MSpVol,
     __global const real4*  restrict MSpPos,
     __global       real*   restrict MSpGaussExponent,
              const float            ms_gamma_value,
@@ -1087,7 +1118,7 @@ __kernel void MSInitOverlapTree_1body(
       atomic_inc(&(ovNumAtomsInTree[tree]));
       int slot = ovTreePointer[tree] + old_count;
       real a = KFC/(radw*radw);
-      real v = MSpVolvdW[msatom];
+      real v = MSpVol[msatom];
       real g = ms_gamma_value;
       MSpGaussExponent[msatom] = a;
       MSpGamma[msatom] = g;
@@ -1108,6 +1139,186 @@ __kernel void MSInitOverlapTree_1body(
     pos++;//new tile
   }
 }
+
+#ifdef SUPPORTS_64_BIT_ATOMICS
+//initializes accumulators for atomic MS energies
+__kernel void MSinitEnergyBuffer(__global  long* restrict MSEnergyBuffer_long){
+  uint iatom = get_global_id(0);
+  while(iatom < PADDED_NUM_ATOMS){
+    MSEnergyBuffer_long[iatom] = 0;
+    iatom += get_global_size(0);
+  }
+}
+
+//transfer MS energies to OpenMM's energy buffer
+__kernel void MSupdateEnergyBuffer(__global  long* restrict MSEnergyBuffer_long,
+				   __global mixed* restrict energyBuffer){
+  real scale = 1/(real) 0x100000000;
+  uint iatom = get_global_id(0);
+  while(iatom < PADDED_NUM_ATOMS){
+    energyBuffer[iatom] = scale*MSEnergyBuffer_long[iatom];
+    iatom += get_global_size(0);
+  }
+}
+#endif
+			       
+//update energy and force buffers with MS energies and forces 
+__kernel void MSupdateSelfVolumesForces(int update_energy,
+					int const             padded_num_atoms,
+					int const             ntiles, 
+					int const             MStile_size,
+					__global const int*   restrict MScount,
+					__global const int*   restrict MSptr,
+					__global const int*   restrict ovAtomTreePointer,
+					__global const real*  restrict ovVolEnergy,
+					__global const real4* restrict grad, //gradient wrt to atom positions and volume
+				        __global const real4* restrict posq, //atomic positions
+					__global  int*   restrict MSpParent1, 
+					__global  int*   restrict MSpParent2,
+					__global  int*   restrict AtomSemaphor,
+					__global  real4* restrict MSphder,
+					__global  real*  restrict MSpfms,				
+#ifdef SUPPORTS_64_BIT_ATOMICS
+				        __global long*   restrict forceBuffers,
+					__global long*   restrict MSEnergyBuffer_long
+#else
+					__global real4*  restrict forceBuffers,
+					__global mixed*  restrict energyBuffer
+#endif
+){
+  const unsigned int totalWarps = get_global_size(0)/TILE_SIZE;
+  const unsigned int warp = get_global_id(0)/TILE_SIZE;
+  const unsigned int warp_in_group = get_local_id(0)/TILE_SIZE;
+  const unsigned int tgx = get_local_id(0) & (TILE_SIZE-1); //id in warp
+  const unsigned int tbx = get_local_id(0) - tgx;           //start of warp
+  const unsigned int id = get_global_id(0);
+
+  int pos = (int) (warp*(long)ntiles/totalWarps);
+  int end = (int) ((warp+1)*(long)ntiles/totalWarps);
+  while(pos < end && pos < ntiles){
+
+    //load ms atoms in this tile onto one of the trees
+    int ims = tgx;
+    while(ims < MScount[pos] ){
+      int msatom = MSptr[pos*MStile_size + ims];
+      int parent1 = MSpParent1[msatom];
+      int parent2 = MSpParent2[msatom];
+      real4 dist = (real4) (posq[parent2].xyz - posq[parent1].xyz, 0);
+      real4 hder = MSphder[msatom];
+      real fms = MSpfms[msatom];
+      real gms = 1. - fms;
+      real evprod = -dot(grad[msatom],dist);
+      real4 force1 = evprod * hder - gms * grad[msatom];
+      real4 force2 = evprod * hder - fms * grad[msatom];
+#ifdef SUPPORTS_64_BIT_ATOMICS
+      atom_add(&forceBuffers[parent1                     ], (long)(force1.x*0x100000000));
+      atom_add(&forceBuffers[parent1 +   padded_num_atoms], (long)(force1.y*0x100000000));
+      atom_add(&forceBuffers[parent1 + 2*padded_num_atoms], (long)(force1.z*0x100000000));
+      atom_add(&forceBuffers[parent2                     ], (long)(force2.x*0x100000000));
+      atom_add(&forceBuffers[parent2 +   padded_num_atoms], (long)(force2.y*0x100000000));
+      atom_add(&forceBuffers[parent2 + 2*padded_num_atoms], (long)(force2.z*0x100000000));
+      if(update_energy > 0){
+	// arbitrarily assigns energy to first parent
+	uint slot = ovAtomTreePointer[msatom];
+	atom_add(&MSEnergyBuffer_long[parent1], (long)(ovVolEnergy[slot]*0x100000000));
+      }
+#else
+      //in most cases the semaphor will deadlock for a synchronized warp of size greater than 1
+      GetSemaphor(&(AtomSemaphor[parent1]));
+      GetSemaphor(&(AtomSemaphor[parent2]));
+      forceBuffers[parent1].xyz += force1.xyz;
+      forceBuffers[parent2].xyz += force2.xyz;
+      if(update_energy > 0){
+	uint slot = ovAtomTreePointer[msatom];
+	energyBuffer[parent1] += ovVolEnergy[slot];
+      }
+      ReleaseSemaphor(&(AtomSemaphor[parent1]));
+      ReleaseSemaphor(&(AtomSemaphor[parent2]));
+#endif
+      ims += TILE_SIZE;
+    }
+    pos++;//new tile
+  }
+}
+
+//same as MSInit 1-body but for a rescan
+__kernel void MSInitRescanOverlapTree_1body(
+    int const                 ntiles, 
+    int const                 MStile_size,
+    __global const int*    restrict MScount,
+    __global const int*    restrict MSptr,			       
+    __global const real*   restrict MSpVol,
+    __global const real4*  restrict MSpPos,
+    __global       real*   restrict MSpGaussExponent,
+             const float            ms_gamma_value,
+    __global       real*   restrict MSpGamma,
+    
+
+    
+    unsigned const int              num_trees,
+    unsigned const int              reset_tree_size,
+    __global       int*   restrict ovTreePointer, 
+    __global       int*   restrict ovNumAtomsInTree,
+    __global       int*   restrict ovFirstAtom, 
+    __global       int*   restrict ovAtomTreeSize,    //sizes of tree sections
+    __global       int*   restrict NIterations,      
+    __global const int*   restrict ovAtomTreePaddedSize, 
+    __global       int*   restrict ovAtomTreePointer,    //pointers to atoms in tree
+    __global       int*   restrict ovLevel, //this and below define tree
+    __global       real*  restrict ovVolume,
+    __global       real*  restrict ovVsp,
+    __global       real*  restrict ovVSfp,
+    __global       real*  restrict ovGamma1i,
+    __global       real4* restrict ovG,
+    __global       real4* restrict ovDV1,
+    __global       int*   restrict ovLastAtom,
+    __global       int*   restrict ovRootIndex,
+    __global       int*   restrict ovChildrenStartIndex,
+    __global volatile int*   restrict ovChildrenCount
+){
+
+  const unsigned int totalWarps = get_global_size(0)/TILE_SIZE;
+  const unsigned int warp = get_global_id(0)/TILE_SIZE;
+  const unsigned int warp_in_group = get_local_id(0)/TILE_SIZE;
+  const unsigned int tgx = get_local_id(0) & (TILE_SIZE-1); //id in warp
+  const unsigned int tbx = get_local_id(0) - tgx;           //start of warp
+  const unsigned int localAtomIndex = get_local_id(0);
+  const uint nms_slots = ntiles*MStile_size;
+  const real radw = SOLVENT_RADIUS;
+  
+  //    if(id == 0) ovNumAtomsInTree[section] = 0; need to reset tree
+  int pos = (int) (warp*(long)ntiles/totalWarps);
+  int end = (int) ((warp+1)*(long)ntiles/totalWarps);
+  while(pos < end && pos < ntiles){
+
+    //load ms atoms in this tile onto one of the trees
+    int ims = tgx;
+    while(ims < MScount[pos] ){
+      int msatom = MSptr[pos*MStile_size + ims];
+      int tree = (msatom*num_trees)/nms_slots;
+      int slot = ovAtomTreePointer[msatom];
+      real a = KFC/(radw*radw);
+      real v = MSpVol[msatom];
+      real g = ms_gamma_value;
+      MSpGaussExponent[msatom] = a;
+      MSpGamma[msatom] = g;
+      if(slot - ovTreePointer[tree] < ovAtomTreePaddedSize[tree]){
+	ovLevel[slot] = 1;
+	ovVolume[slot] = v;
+	ovVsp[slot] = 1;
+	ovVSfp[slot] = 1;
+	ovGamma1i[slot] = g;
+	ovG[slot] = (real4)(MSpPos[msatom].xyz,a);
+	ovDV1[slot] = (real4)0.f;
+	ovLastAtom[slot] = msatom;
+      }
+      ims += TILE_SIZE;
+    }
+
+    pos++;//new tile
+  }
+}
+
 
 
 #define Min_GVol (MIN_GVOL)
@@ -1660,6 +1871,7 @@ __kernel void MSaddSelfVolumes(
       atom_add(&selfVolumeBuffer_long[parent1], (long)(selfv*0x100000000));
       atom_add(&selfVolumeBuffer_long[parent2], (long)(selfv*0x100000000));
 #else
+      //in most cases the semaphor will deadlock for a synchronized warp of size greater than 1
       GetSemaphor(&(Semaphor[parent1]));
       selfVolume[parent1] += selfv;
       ReleaseSemaphor(&(Semaphor[parent1]));

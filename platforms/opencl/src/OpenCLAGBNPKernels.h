@@ -126,6 +126,7 @@ public:
 	ovChildrenReported = NULL;
 
 	ovAtomBuffer = NULL;	    
+	EnergyBuffer_long = NULL;
 	selfVolumeBuffer_long = NULL;
 	selfVolumeBuffer = NULL;
 	AccumulationBuffer1_long = NULL;
@@ -180,6 +181,7 @@ public:
 	delete ovAtomBuffer;	    
 	delete selfVolumeBuffer_long;
 	delete selfVolumeBuffer;
+	delete EnergyBuffer_long;
 	delete AccumulationBuffer1_long;
 	delete AccumulationBuffer1_real;
 	delete AccumulationBuffer2_long;
@@ -250,7 +252,8 @@ public:
       OpenMM::OpenCLArray* ovOKtoProcessFlag;
       OpenMM::OpenCLArray* ovChildrenReported;
 
-      OpenMM::OpenCLArray* ovAtomBuffer;	    
+      OpenMM::OpenCLArray* ovAtomBuffer;
+      OpenMM::OpenCLArray* EnergyBuffer_long;
       OpenMM::OpenCLArray* selfVolumeBuffer_long;
       OpenMM::OpenCLArray* selfVolumeBuffer;
       OpenMM::OpenCLArray* AccumulationBuffer1_long;
@@ -581,7 +584,8 @@ private:
     cl::Kernel MSParticles1VfreeKernel;
     cl::Kernel MSParticles1VolsKernel;
     cl::Kernel MSParticles2CountKernel;
-    cl::Kernel MSInitOverlapTree_1body_1Kernel;
+    cl::Kernel MSInitOverlapTreeVdW_1body_1Kernel;
+    cl::Kernel MSInitRescanOverlapTreeLargeR_1body_1Kernel;
     cl::Kernel MSresetTreeKernel;
     cl::Kernel MSResetTreeCountKernel;
     cl::Kernel MSInitOverlapTreeCountKernel;
@@ -593,10 +597,15 @@ private:
     cl::Kernel MSresetSelfVolumesKernel;
     cl::Kernel MScomputeSelfVolumesKernel;
     cl::Kernel MSreduceSelfVolumesKernel_buffer;
+    cl::Kernel MSinitEnergyBufferKernel;
+    cl::Kernel MSupdateEnergyBufferKernel;
     cl::Kernel MSupdateSelfVolumesForcesKernel;
     cl::Kernel MSaddSelfVolumesKernel;
     cl::Kernel MSaddSelfVolumesFromLongKernel;
-
+    cl::Kernel MSResetRescanOverlapTreeKernel;
+    cl::Kernel MSInitRescanOverlapTreeKernel;
+    cl::Kernel MSRescanOverlapTreeKernel;
+    
     OpenMM::OpenCLArray* MScount1;
     OpenMM::OpenCLArray* MScount2;
     

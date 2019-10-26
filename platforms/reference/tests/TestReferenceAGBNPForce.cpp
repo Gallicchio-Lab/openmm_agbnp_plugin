@@ -31,7 +31,7 @@ void testForce() {
     System system;
     NonbondedForce *nb = new NonbondedForce();
     AGBNPForce* force = new AGBNPForce();
-    force->setVersion(2);
+    force->setVersion(1);
     system.addForce(nb);
     system.addForce(force);
     //read from stdin

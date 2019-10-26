@@ -801,7 +801,7 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
   vector<RealVec>& pos = extractPositions(context);
   vector<RealVec>& force = extractForces(context);
   RealOpenMM energy = 0.0;
-  int verbose_level = 1;
+  int verbose_level = 2;
   bool verbose = verbose_level > 0;
   
   if(verbose_level > 0) {
@@ -1672,6 +1672,16 @@ double ReferenceCalcAGBNPForceKernel::executeAGBNP2(ContextImpl& context, bool i
   
   //MS Large radii
   if(num_ms > 0){
+
+    if(verbose_level > 1){
+      //print out free volumes of ms spheres with large atomic radii
+      double volms_largeR = 0.;
+      for (int i = 0; i<msparticles2.size(); i++){
+	volms_largeR += msparticles2[i].vol_large;
+	cout << "VMW: " << i << " " << msparticles2[i].parent1 << " " << msparticles2[i].parent2 << " " << msparticles2[i].vol0 << " " << msparticles2[i].vol_vdw << " " << msparticles2[i].vol_large << endl;
+      }     
+      cout << "volms_largeR(free): "  << volms_largeR << endl;
+    }
     
     //now do the same for MS particles with free volumes from large radii
     for(int i=0;i<num_ms;i++) volumes_ms[i] = msparticles2[i].vol_large;
